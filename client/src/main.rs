@@ -17,8 +17,9 @@ const SHOOT_COOLDOWN: f32 = 0.5; // Temps de recharge entre les tirs
 enum AppState {
     #[default]
     Loading,
-    RenderMap,  
+    RenderMap,
     Playing,
+    GameOver,
 }
 
 #[derive(Resource)]
@@ -50,11 +51,12 @@ struct OtherPlayer {
 struct GameState {
     player_name: String,
     player_id: Option<String>,
-    players: HashMap<String, (f32, f32, bool)>, // Ajout de l'état is_alive
+    players: HashMap<String, (f32, f32, bool)>, 
     map: Option<Map>,
     map_rendered: bool,
     last_shoot_time: f32,
-    is_alive: bool, // Nouvel état pour le joueur local
+    is_alive: bool, 
+    game_over_results: Option<(String, Vec<(String, u32)>)>, // (winner, scores)
 }
 
 #[derive(Resource)]
@@ -76,6 +78,7 @@ enum ServerMessage {
     GameState { players: HashMap<String, (f32, f32, bool)> }, // Ajout de l'état is_alive
     PlayerShot { shooter: String, target: String },
     PlayerDied { player: String },
+    GameOver { winner: String, scores: Vec<(String, u32)> },
 }
 
 fn main() {
@@ -117,6 +120,7 @@ fn main() {
                 map_rendered: false,
                 last_shoot_time: 0.0,
                 is_alive: true,
+                game_over_results: None,
             })
             .insert_resource(NetworkReceiver(network_receiver))
             .insert_resource(NetworkSender(client_sender))
@@ -131,6 +135,7 @@ fn main() {
             .add_startup_system(setup_fps_camera)
             .insert_resource(CursorState { captured: true })
             .add_system(toggle_cursor_capture)
+            .add_system(game_over_screen.in_schedule(OnEnter(AppState::GameOver)))
             .run();
 }
 
@@ -289,7 +294,8 @@ fn handle_network_messages(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
     network_receiver: Res<NetworkReceiver>,
-) {
+    mut app_state: ResMut<NextState<AppState>>,
+){
     for message in network_receiver.0.try_iter() {
         println!("Received message: {:?}", message);
         match message {
@@ -319,6 +325,15 @@ fn handle_network_messages(
                 } else {
                     println!("Player {} died!", player);
                 }
+            }
+            ServerMessage::GameOver { winner, scores } => {
+                println!("Game Over! Winner: {}", winner);
+                println!("Scores:");
+                for (name, score) in &scores {
+                    println!("{}: {}", name, score);
+                }
+                game_state.game_over_results = Some((winner, scores));
+                app_state.set(AppState::GameOver);
             }
         }
     }
@@ -461,5 +476,54 @@ async fn network_loop(socket: UdpSocket, sender: Sender<ServerMessage>, receiver
             }
             Err(e) => eprintln!("Failed to receive data: {}", e),
         }
+    }
+}
+
+fn game_over_screen(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    asset_server: Res<AssetServer>,
+) {
+    if let Some((winner, scores)) = &game_state.game_over_results {
+        commands.spawn(NodeBundle {
+            style: Style {
+                size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            background_color: Color::rgba(0.0, 0.0, 0.0, 0.8).into(),
+            ..default()
+        }).with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                format!("Game Over!\nWinner: {}", winner),
+                TextStyle {
+                    font: asset_server.load("fonts/FiraSans-Medium.ttf"),
+                    font_size: 40.0,
+                    color: Color::WHITE,
+                },
+            ));
+
+            parent.spawn(TextBundle::from_section(
+                "Scores:",
+                TextStyle {
+                    font: asset_server.load("fonts/FiraSans-Medium.ttf"),
+                    font_size: 30.0,
+                    color: Color::WHITE,
+                },
+            ));
+
+            for (name, score) in scores {
+                parent.spawn(TextBundle::from_section(
+                    format!("{}: {}", name, score),
+                    TextStyle {
+                        font: asset_server.load("fonts/FiraSans-Medium.ttf"),
+                        font_size: 20.0,
+                        color: Color::WHITE,
+                    },
+                ));
+            }
+        });
     }
 }

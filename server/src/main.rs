@@ -1,6 +1,7 @@
 use tokio::net::UdpSocket;
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use std::time::Instant;
+use std::{collections::HashMap, time::Duration};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -62,6 +63,7 @@ struct Player {
     name: String,
     position: (f32, f32),
     is_alive: bool,
+    points: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -77,12 +79,31 @@ enum ServerMessage {
     GameState { players: HashMap<String, (f32, f32, bool)> },
     PlayerShot { shooter: String, target: String },
     PlayerDied { player: String },
+    GameOver { winner: String, scores: Vec<(String, u32)> },
 }
 
 struct GameState {
     players: HashMap<SocketAddr, Player>,
     map: Map,
     difficulty: u8,
+    game_start_time: Instant,
+    game_duration: Duration,
+}
+
+impl GameState {
+    fn new(difficulty: u8) -> Self {
+        Self {
+            players: HashMap::new(),
+            map: Map::new(difficulty),
+            difficulty,
+            game_start_time: Instant::now(),
+            game_duration: Duration::from_secs(60), // 5 minutes
+        }
+    }
+
+    fn is_game_over(&self) -> bool {
+        self.game_start_time.elapsed() >= self.game_duration
+    }
 }
 
 #[tokio::main]
@@ -96,11 +117,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let socket = UdpSocket::bind("0.0.0.0:34254").await?;
     let socket = Arc::new(socket);
-    let game_state = Arc::new(Mutex::new(GameState {
-        players: HashMap::new(),
-        map: Map::new(difficulty),
-        difficulty,
-    }));
+    let game_state = Arc::new(Mutex::new(GameState::new(difficulty)));
+
+    let game_state_clone = Arc::clone(&game_state);
+    let socket_clone = Arc::clone(&socket);
+    tokio::spawn(async move {
+        if let Err(e) = check_game_over(game_state_clone, socket_clone).await {
+            eprintln!("Error in game over check: {}", e);
+        }
+    });
 
     println!("Server listening on {}", socket.local_addr()?);
 
@@ -132,6 +157,7 @@ async fn handle_message(
                 name: name.clone(),
                 position: (1.0, 1.0),
                 is_alive: true,
+                points: 0
             };
             state.players.insert(addr, player);
             let welcome_message = ServerMessage::Welcome {
@@ -207,6 +233,9 @@ async fn handle_message(
                     if let Some(player) = state.players.get_mut(&hit_addr) {
                         player.is_alive = false;
                     }
+                    if let Some(shooter) = state.players.get_mut(&addr) {
+                        shooter.points += 10;
+                    }
                     
                     let shot_message = ServerMessage::PlayerShot { 
                         shooter: shooter_name.clone(),
@@ -252,4 +281,34 @@ async fn broadcast_game_state(
         socket.send_to(serialized.as_bytes(), addr).await?;
     }
     Ok(())
+}
+
+async fn check_game_over(game_state: Arc<Mutex<GameState>>, socket: Arc<UdpSocket>) -> Result<(), Box<dyn std::error::Error>> {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+    loop {
+        interval.tick().await;
+        let mut state = game_state.lock().await;
+
+        if state.is_game_over() {
+            let winner = state.players.values()
+                .max_by_key(|p| p.points)
+                .cloned();
+
+            if let Some(winner) = winner {
+                let game_over_message = ServerMessage::GameOver {
+                    winner: winner.name,
+                    scores: state.players.values().map(|p| (p.name.clone(), p.points)).collect(),
+                };
+
+                let serialized = serde_json::to_string(&game_over_message)?;
+                for addr in state.players.keys() {
+                    socket.send_to(serialized.as_bytes(), addr).await?;
+                }
+
+                // Réinitialiser le jeu
+                *state = GameState::new(state.difficulty);
+            }
+        }
+    }
 }

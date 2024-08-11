@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use bevy::window::Window;
+
 use tokio::net::UdpSocket;
 use serde::{Serialize, Deserialize};
 use tokio::runtime::Runtime;
@@ -7,6 +9,7 @@ use std::collections::HashMap;
 use bevy::ecs::system::ParamSet;
 
 const PLAYER_SPEED: f32 = 0.1;
+const SHOOT_COOLDOWN: f32 = 0.5; // Temps de recharge entre les tirs
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Default, States)]
 enum AppState {
@@ -33,9 +36,11 @@ struct OtherPlayer {
 struct GameState {
     player_name: String,
     player_id: Option<String>,
-    players: HashMap<String, (f32, f32)>,
+    players: HashMap<String, (f32, f32, bool)>, // Ajout de l'état is_alive
     map: Option<Map>,
-    map_rendered: bool,  
+    map_rendered: bool,
+    last_shoot_time: f32,
+    is_alive: bool, // Nouvel état pour le joueur local
 }
 
 #[derive(Resource)]
@@ -48,12 +53,15 @@ struct NetworkSender(Sender<ClientMessage>);
 enum ClientMessage {
     Join { name: String },
     Move { direction: (f32, f32) },
+    Shoot { direction: (f32, f32) },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 enum ServerMessage {
     Welcome { map: Map, player_id: String },
-    GameState { players: HashMap<String, (f32, f32)> },
+    GameState { players: HashMap<String, (f32, f32, bool)> }, // Ajout de l'état is_alive
+    PlayerShot { shooter: String, target: String },
+    PlayerDied { player: String },
 }
 
 fn main() {
@@ -93,6 +101,8 @@ fn main() {
                 players: HashMap::new(),
                 map: None,
                 map_rendered: false,
+                last_shoot_time: 0.0,
+                is_alive: true,
             })
             .insert_resource(NetworkReceiver(network_receiver))
             .insert_resource(NetworkSender(client_sender))
@@ -159,9 +169,16 @@ fn render_map(
 
 fn player_input(
     keyboard_input: Res<Input<KeyCode>>,
+    mouse_input: Res<Input<MouseButton>>,
     network_sender: Res<NetworkSender>,
     mut game_state: ResMut<GameState>,
+    time: Res<Time>,
+    window: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
 ) {
+    if !game_state.is_alive {
+        return; // Si le joueur est mort, ne pas traiter les entrées
+    }
     let mut direction = (0.0, 0.0);
 
     if keyboard_input.pressed(KeyCode::W) || keyboard_input.pressed(KeyCode::Up) {
@@ -196,7 +213,36 @@ fn player_input(
             }
         }
     }
-}
+        // Gestion du tir
+        if mouse_input.just_pressed(MouseButton::Left) {
+            let current_time = time.elapsed_seconds();
+            if current_time - game_state.last_shoot_time >= SHOOT_COOLDOWN {
+                game_state.last_shoot_time = current_time;
+                
+                let window = window.single();
+                if let Some(cursor_position) = window.cursor_position() {
+                    if let Ok((camera, camera_transform)) = camera_query.get_single() {
+                        if let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position) {
+                            let world_position = ray.origin + ray.direction * 10.0; // Distance arbitraire
+                            let player_position = game_state.players.get(game_state.player_id.as_ref().unwrap()).unwrap();
+                            let direction = (
+                                world_position.x - player_position.0,
+                                world_position.z - player_position.1,
+                            );
+                            let magnitude = (direction.0 * direction.0 + direction.1 * direction.1).sqrt();
+                            let normalized_direction = (direction.0 / magnitude, direction.1 / magnitude);
+        
+                            let shoot_message = ClientMessage::Shoot { direction: normalized_direction };
+                            if let Err(e) = network_sender.0.send(shoot_message) {
+                                eprintln!("Failed to send shoot message: {}", e);
+                            }
+                            println!("Player shot in direction: {:?}", normalized_direction);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
 
 fn handle_network_messages(
@@ -218,6 +264,21 @@ fn handle_network_messages(
             }
             ServerMessage::GameState { players } => {
                 game_state.players = players;
+            }
+            ServerMessage::PlayerShot { shooter, target } => {
+                if Some(target.clone()) == game_state.player_id {
+                    println!("You were shot by {}!", shooter);
+                } else {
+                    println!("Player {} was shot by {}!", target, shooter);
+                }
+            }
+            ServerMessage::PlayerDied { player } => {
+                if Some(player.clone()) == game_state.player_id {
+                    game_state.is_alive = false;
+                    println!("You died!");
+                } else {
+                    println!("Player {} died!", player);
+                }
             }
         }
     }
@@ -275,29 +336,32 @@ fn update_player_positions(
     {
         let mut other_player_query = query_set.p1();
         for (entity, mut transform, other_player) in other_player_query.iter_mut() {
-            if let Some(&position) = game_state.players.get(&other_player.name) {
-                transform.translation = Vec3::new(position.0, 0.5, position.1);
+            if let Some(&(position_x, position_y, is_alive)) = game_state.players.get(&other_player.name) {
+                transform.translation = Vec3::new(position_x, 0.5, position_y);
+                if !is_alive {
+                    other_players_to_remove.push(entity);
+                }
             } else {
                 other_players_to_remove.push(entity);
             }
         }
     }
 
-    // Suppression des joueurs qui ne sont plus dans le jeu
+    // Suppression des joueurs morts ou qui ne sont plus dans le jeu
     for entity in other_players_to_remove {
         commands.entity(entity).despawn();
     }
 
     // Ajout des nouveaux autres joueurs
-    for (name, &position) in game_state.players.iter() {
-        if Some(name) != game_state.player_id.as_ref() {
+    for (name, &(position_x, position_y, is_alive)) in game_state.players.iter() {
+        if Some(name) != game_state.player_id.as_ref() && is_alive {
             let other_player_query = query_set.p1();
             if !other_player_query.iter().any(|(_, _, op)| &op.name == name) {
                 commands.spawn((
                     PbrBundle {
                         mesh: meshes.add(Mesh::from(shape::Cube { size: 0.8 })),
                         material: materials.add(Color::rgb(0.9, 0.2, 0.3).into()),
-                        transform: Transform::from_xyz(position.0, 0.5, position.1),
+                        transform: Transform::from_xyz(position_x, 0.5, position_y),
                         ..default()
                     },
                     OtherPlayer { name: name.clone() },
@@ -327,7 +391,6 @@ async fn network_loop(socket: UdpSocket, sender: Sender<ServerMessage>, receiver
     loop {
         match socket.recv(&mut buf).await {
             Ok(n) => {
-                println!("Received {} bytes from server", n);
                 if let Ok(message) = serde_json::from_slice::<ServerMessage>(&buf[..n]) {
                     println!("Parsed server message: {:?}", message);
                     if let Err(e) = sender.send(message) {

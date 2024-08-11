@@ -10,6 +10,7 @@ use std::io::{self, Write};
 const MAP_WIDTH: usize = 20;
 const MAP_HEIGHT: usize = 20;
 const PLAYER_SPEED: f32 = 0.1;
+const SHOOT_RANGE: f32 = 10.0;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 struct Map {
@@ -21,23 +22,20 @@ impl Map {
         let mut rng = rand::thread_rng();
         let mut cells = vec![vec![false; MAP_WIDTH]; MAP_HEIGHT];
         
-        // Paramètres de génération basés sur la difficulté
         let (wall_chance, dead_end_chance) = match difficulty {
-            1 => (0.1, 0.05),  // Facile: peu de murs et de culs-de-sac
-            2 => (0.2, 0.1),   // Moyen: plus de murs et de culs-de-sac
-            3 => (0.3, 0.15),  // Difficile: beaucoup de murs et de culs-de-sac
-            _ => (0.2, 0.1),   // Par défaut: niveau moyen
+            1 => (0.1, 0.05),
+            2 => (0.2, 0.1),
+            3 => (0.3, 0.15),
+            _ => (0.2, 0.1),
         };
         
-        // Génération de murs
         for y in 0..MAP_HEIGHT {
             for x in 0..MAP_WIDTH {
                 if x == 0 || y == 0 || x == MAP_WIDTH - 1 || y == MAP_HEIGHT - 1 {
-                    cells[y][x] = true; // Murs extérieurs
+                    cells[y][x] = true;
                 } else if rng.gen::<f32>() < wall_chance {
-                    cells[y][x] = true; // Mur intérieur
+                    cells[y][x] = true;
                 } else if rng.gen::<f32>() < dead_end_chance {
-                    // Création d'un cul-de-sac
                     let directions = [(0, 1), (1, 0), (0, -1), (-1, 0)];
                     for _ in 0..3 {
                         let (dx, dy) = directions[rng.gen_range(0..4)];
@@ -63,20 +61,23 @@ impl Map {
 struct Player {
     name: String,
     position: (f32, f32),
+    is_alive: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 enum ClientMessage {
     Join { name: String },
     Move { direction: (f32, f32) },
+    Shoot { direction: (f32, f32) },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 enum ServerMessage {
     Welcome { map: Map, player_id: String, difficulty: u8 },
-    GameState { players: HashMap<String, (f32, f32)> },
+    GameState { players: HashMap<String, (f32, f32, bool)> },
+    PlayerShot { shooter: String, target: String },
+    PlayerDied { player: String },
 }
-
 
 struct GameState {
     players: HashMap<SocketAddr, Player>,
@@ -91,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
-    let difficulty: u8 = input.trim().parse().unwrap_or(2);  // Par défaut à 2 si l'entrée est invalide
+    let difficulty: u8 = input.trim().parse().unwrap_or(2);
 
     let socket = UdpSocket::bind("0.0.0.0:34254").await?;
     let socket = Arc::new(socket);
@@ -100,7 +101,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         map: Map::new(difficulty),
         difficulty,
     }));
-
 
     println!("Server listening on {}", socket.local_addr()?);
 
@@ -130,7 +130,8 @@ async fn handle_message(
             println!("Player connected: {} (IP: {})", name, addr);
             let player = Player {
                 name: name.clone(),
-                position: (1.0, 1.0), // Position de départ
+                position: (1.0, 1.0),
+                is_alive: true,
             };
             state.players.insert(addr, player);
             let welcome_message = ServerMessage::Welcome {
@@ -144,7 +145,6 @@ async fn handle_message(
             broadcast_game_state(&state, &socket).await?;
         }
         ClientMessage::Move { direction } => {
-            // Calculez les nouvelles coordonnées du joueur avant d'emprunter `state` de manière mutable.
             let new_position = {
                 if let Some(player) = state.players.get(&addr) {
                     let new_x = player.position.0 + direction.0 * PLAYER_SPEED;
@@ -158,11 +158,57 @@ async fn handle_message(
                     None
                 }
             };
-
-            // Ensuite, mettez à jour la position du joueur avec un emprunt mutable.
+        
             if let Some(new_pos) = new_position {
                 if let Some(player) = state.players.get_mut(&addr) {
                     player.position = new_pos;
+                }
+            }
+        }
+        ClientMessage::Shoot { direction } => {
+            let shooter_name = state.players.get(&addr).map(|p| p.name.clone());
+            if let Some(shooter_name) = shooter_name {
+                println!("Player {} is shooting!", shooter_name);
+                
+                let start_pos = state.players.get(&addr).unwrap().position;
+                let target_x = start_pos.0 + direction.0 * SHOOT_RANGE;
+                let target_y = start_pos.1 + direction.1 * SHOOT_RANGE;
+
+                let mut hit_player = None;
+                for (player_addr, player) in state.players.iter_mut() {
+                    if player_addr != &addr && player.is_alive {
+                        let dx = player.position.0 - start_pos.0;
+                        let dy = player.position.1 - start_pos.1;
+                        let distance = (dx * dx + dy * dy).sqrt();
+
+                        if distance <= SHOOT_RANGE {
+                            let t = (dx * direction.0 + dy * direction.1) / (direction.0 * direction.0 + direction.1 * direction.1);
+                            if t >= 0.0 && t <= 1.0 {
+                                hit_player = Some((player_addr.clone(), player.name.clone()));
+                                player.is_alive = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if let Some((hit_addr, hit_name)) = hit_player {
+                    let shot_message = ServerMessage::PlayerShot { 
+                        shooter: shooter_name.clone(),
+                        target: hit_name.clone(),
+                    };
+                    let serialized = serde_json::to_string(&shot_message)?;
+                    socket.send_to(serialized.as_bytes(), &hit_addr).await?;
+                    
+                    let death_message = ServerMessage::PlayerDied { 
+                        player: hit_name.clone()
+                    };
+                    let serialized = serde_json::to_string(&death_message)?;
+                    for addr in state.players.keys() {
+                        socket.send_to(serialized.as_bytes(), addr).await?;
+                    }
+                    
+                    println!("Player {} was shot and killed by {}!", hit_name, shooter_name);
                 }
             }
         }
@@ -175,16 +221,16 @@ async fn broadcast_game_state(
     state: &GameState,
     socket: &Arc<UdpSocket>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let players_state: HashMap<String, (f32, f32)> = state.players
+    let players_state: HashMap<String, (f32, f32, bool)> = state.players
         .iter()
-        .map(|(_, player)| (player.name.clone(), player.position))
+        .map(|(_, player)| (player.name.clone(), (player.position.0, player.position.1, player.is_alive)))
         .collect();
     let game_state_message = ServerMessage::GameState { players: players_state.clone() };
     let serialized = serde_json::to_string(&game_state_message)?;
     
     println!("Broadcasting GameState:");
-    for (name, position) in &players_state {
-        println!("  Player: {}, Position: {:?}", name, position);
+    for (name, (x, y, is_alive)) in &players_state {
+        println!("  Player: {}, Position: ({}, {}), Alive: {}", name, x, y, is_alive);
     }
     
     for addr in state.players.keys() {

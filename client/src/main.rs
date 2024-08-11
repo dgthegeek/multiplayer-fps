@@ -1,11 +1,13 @@
 use bevy::prelude::*;
 use bevy::window::Window;
+use bevy::input::mouse::MouseMotion;
 
 use tokio::net::UdpSocket;
 use serde::{Serialize, Deserialize};
 use tokio::runtime::Runtime;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::collections::HashMap;
+use bevy::window::CursorGrabMode;
 use bevy::ecs::system::ParamSet;
 
 const PLAYER_SPEED: f32 = 0.1;
@@ -15,8 +17,20 @@ const SHOOT_COOLDOWN: f32 = 0.5; // Temps de recharge entre les tirs
 enum AppState {
     #[default]
     Loading,
-    RenderMap,
+    RenderMap,  
     Playing,
+}
+
+#[derive(Resource)]
+struct MouseSensitivity(f32);
+
+#[derive(Component)]
+struct PlayerCamera;
+
+#[derive(Resource)]
+struct PlayerRotation {
+    yaw: f32,
+    pitch: f32,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -111,6 +125,12 @@ fn main() {
             .add_system(player_input)
             .add_system(update_player_positions)
             .add_system(render_map.in_schedule(OnEnter(AppState::RenderMap)))
+            .insert_resource(MouseSensitivity(0.005))
+            .insert_resource(PlayerRotation { yaw: 0.0, pitch: 0.0 })
+            .add_system(player_look)
+            .add_startup_system(setup_fps_camera)
+            .insert_resource(CursorState { captured: true })
+            .add_system(toggle_cursor_capture)
             .run();
 }
 
@@ -170,79 +190,99 @@ fn render_map(
 fn player_input(
     keyboard_input: Res<Input<KeyCode>>,
     mouse_input: Res<Input<MouseButton>>,
+    windows: Query<&Window>,
     network_sender: Res<NetworkSender>,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
-    window: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    player_rotation: Res<PlayerRotation>,
+    camera_query: Query<&Transform, With<PlayerCamera>>,
 ) {
     if !game_state.is_alive {
-        return; // Si le joueur est mort, ne pas traiter les entrées
+        return;
     }
-    let mut direction = (0.0, 0.0);
+    
+    let mut direction = Vec3::ZERO;
 
-    if keyboard_input.pressed(KeyCode::W) || keyboard_input.pressed(KeyCode::Up) {
-        direction.1 -= 1.0;
+    if keyboard_input.pressed(KeyCode::W) {
+        direction += Vec3::new(player_rotation.yaw.sin(), 0.0, player_rotation.yaw.cos());
     }
-    if keyboard_input.pressed(KeyCode::S) || keyboard_input.pressed(KeyCode::Down) {
-        direction.1 += 1.0;
+    if keyboard_input.pressed(KeyCode::S) {
+        direction += Vec3::new(-player_rotation.yaw.sin(), 0.0, -player_rotation.yaw.cos());
     }
-    if keyboard_input.pressed(KeyCode::A) || keyboard_input.pressed(KeyCode::Left) {
-        direction.0 -= 1.0;
+    if keyboard_input.pressed(KeyCode::A) {
+        direction += Vec3::new(-player_rotation.yaw.cos(), 0.0, player_rotation.yaw.sin());
     }
-    if keyboard_input.pressed(KeyCode::D) || keyboard_input.pressed(KeyCode::Right) {
-        direction.0 += 1.0;
+    if keyboard_input.pressed(KeyCode::D) {
+        direction += Vec3::new(player_rotation.yaw.cos(), 0.0, -player_rotation.yaw.sin());
     }
 
-    if direction != (0.0, 0.0) {
-        let magnitude = ((direction.0 as f32).powi(2) + (direction.1 as f32).powi(2)).sqrt();
-        direction.0 /= magnitude;
-        direction.1 /= magnitude;
-        
-        let move_message = ClientMessage::Move { direction };
+    if direction != Vec3::ZERO {
+        direction = direction.normalize();
+        let move_message = ClientMessage::Move { direction: (direction.x, direction.z) };
         if let Err(e) = network_sender.0.send(move_message) {
             eprintln!("Failed to send move message: {}", e);
         }
 
-        // Séparer l'emprunt mutable et immuable
         let player_id = game_state.player_id.clone();
         if let Some(player_id) = player_id {
             if let Some(position) = game_state.players.get_mut(&player_id) {
-                position.0 += direction.0 * PLAYER_SPEED;
-                position.1 += direction.1 * PLAYER_SPEED;
+                position.0 += direction.x * PLAYER_SPEED;
+                position.1 += direction.z * PLAYER_SPEED;
             }
         }
     }
-        // Gestion du tir
-        if mouse_input.just_pressed(MouseButton::Left) {
-            let current_time = time.elapsed_seconds();
-            if current_time - game_state.last_shoot_time >= SHOOT_COOLDOWN {
-                game_state.last_shoot_time = current_time;
-                
-                let window = window.single();
-                if let Some(cursor_position) = window.cursor_position() {
-                    if let Ok((camera, camera_transform)) = camera_query.get_single() {
-                        if let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position) {
-                            let world_position = ray.origin + ray.direction * 10.0; // Distance arbitraire
-                            let player_position = game_state.players.get(game_state.player_id.as_ref().unwrap()).unwrap();
-                            let direction = (
-                                world_position.x - player_position.0,
-                                world_position.z - player_position.1,
-                            );
-                            let magnitude = (direction.0 * direction.0 + direction.1 * direction.1).sqrt();
-                            let normalized_direction = (direction.0 / magnitude, direction.1 / magnitude);
-        
-                            let shoot_message = ClientMessage::Shoot { direction: normalized_direction };
-                            if let Err(e) = network_sender.0.send(shoot_message) {
-                                eprintln!("Failed to send shoot message: {}", e);
-                            }
-                            println!("Player shot in direction: {:?}", normalized_direction);
-                        }
-                    }
+    // Gestion du tir
+    if mouse_input.just_pressed(MouseButton::Left) {
+        let current_time = time.elapsed_seconds();
+        if current_time - game_state.last_shoot_time >= SHOOT_COOLDOWN {
+            game_state.last_shoot_time = current_time;
+            
+            if let Ok(camera_transform) = camera_query.get_single() {
+                let shoot_direction = camera_transform.forward();
+                let shoot_message = ClientMessage::Shoot { direction: (shoot_direction.x, shoot_direction.z) };
+                if let Err(e) = network_sender.0.send(shoot_message) {
+                    eprintln!("Failed to send shoot message: {}", e);
                 }
+                println!("Player shot in direction: {:?}", (shoot_direction.x, shoot_direction.z));
             }
         }
     }
+}
+
+#[derive(Resource)]
+struct CursorState {
+    captured: bool,
+}
+fn setup_fps_camera(mut windows: Query<&mut Window>, cursor_state: Res<CursorState>) {
+    if let Ok(mut window) = windows.get_single_mut() {
+        if cursor_state.captured {
+            window.cursor.grab_mode = CursorGrabMode::Locked;
+            window.cursor.visible = false;
+        } else {
+            window.cursor.grab_mode = CursorGrabMode::None;
+            window.cursor.visible = true;
+        }
+    }
+}
+//pour basculer entre le jeu et dehors
+fn toggle_cursor_capture(
+    keyboard_input: Res<Input<KeyCode>>,
+    mut cursor_state: ResMut<CursorState>,
+    mut windows: Query<&mut Window>,
+) {
+    if keyboard_input.just_pressed(KeyCode::Escape) {
+        cursor_state.captured = !cursor_state.captured;
+        if let Ok(mut window) = windows.get_single_mut() {
+            if cursor_state.captured {
+                window.cursor.grab_mode = CursorGrabMode::Locked;
+                window.cursor.visible = false;
+            } else {
+                window.cursor.grab_mode = CursorGrabMode::None;
+                window.cursor.visible = true;
+            }
+        }
+    }
+}
 
 
 fn handle_network_messages(
@@ -288,27 +328,28 @@ fn handle_network_messages(
 fn update_player_positions(
     mut commands: Commands,
     game_state: Res<GameState>,
+    player_rotation: Res<PlayerRotation>,
     mut query_set: ParamSet<(
         Query<(Entity, &mut Transform), With<Player>>,
         Query<(Entity, &mut Transform, &OtherPlayer)>,
-        Query<(Entity, &mut Transform), With<Camera3d>>,
+        Query<(Entity, &mut Transform), With<PlayerCamera>>,
     )>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Mise à jour du joueur principal
     if let Some(player_id) = &game_state.player_id {
-        if let Some(&position) = game_state.players.get(player_id) {
+        if let Some(&(position_x, position_y, _)) = game_state.players.get(player_id) {
             let mut player_query = query_set.p0();
             let player_entity = if let Ok((entity, mut transform)) = player_query.get_single_mut() {
-                transform.translation = Vec3::new(position.0, 0.5, position.1);
+                transform.translation = Vec3::new(position_x, 1.0, position_y); // Augmentez y à 1.0 pour la hauteur des yeux
+                transform.rotation = Quat::from_rotation_y(player_rotation.yaw);
                 entity
             } else {
                 commands.spawn((
                     PbrBundle {
-                        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.8 })),
+                        mesh: meshes.add(Mesh::from(shape::Capsule::default())),
                         material: materials.add(Color::rgb(0.2, 0.7, 0.9).into()),
-                        transform: Transform::from_xyz(position.0, 0.5, position.1),
+                        transform: Transform::from_xyz(position_x, 1.0, position_y),
                         ..default()
                     },
                     Player,
@@ -318,15 +359,17 @@ fn update_player_positions(
             // Mise à jour de la caméra
             let mut camera_query = query_set.p2();
             if let Ok((_, mut camera_transform)) = camera_query.get_single_mut() {
-                let player_pos = Vec3::new(position.0, 0.5, position.1);
-                camera_transform.translation = player_pos + Vec3::new(0.0, 20.0, 0.0); // Placez la caméra 20 unités au-dessus du joueur
-                camera_transform.look_at(player_pos, Vec3::Z); // Regardez vers le bas
+                let player_pos = Vec3::new(position_x, 1.0, position_y);
+                camera_transform.translation = player_pos;
+                camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, player_rotation.yaw, player_rotation.pitch, 0.0);
             } else {
-                commands.spawn(Camera3dBundle {
-                    transform: Transform::from_xyz(position.0, 20.0, position.1)
-                        .looking_at(Vec3::new(position.0, 0.0, position.1), Vec3::Z),
-                    ..default()
-                });
+                commands.spawn((
+                    Camera3dBundle {
+                        transform: Transform::from_xyz(position_x, 1.0, position_y),
+                        ..default()
+                    },
+                    PlayerCamera,
+                ));
             }
         }
     }
@@ -368,6 +411,22 @@ fn update_player_positions(
                 ));
             }
         }
+    }
+}
+
+//gerer la rotation avec le souris
+fn player_look(
+    mut motion_evr: EventReader<MouseMotion>,
+    mut player_rotation: ResMut<PlayerRotation>,
+    sensitivity: Res<MouseSensitivity>,
+    cursor_state: Res<CursorState>,
+) {
+    if cursor_state.captured {
+        for ev in motion_evr.iter() {
+            player_rotation.yaw -= ev.delta.x * sensitivity.0;
+            player_rotation.pitch -= ev.delta.y * sensitivity.0;
+        }
+        player_rotation.pitch = player_rotation.pitch.clamp(-1.54, 1.54);
     }
 }
 

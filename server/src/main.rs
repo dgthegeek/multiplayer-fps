@@ -171,28 +171,43 @@ async fn handle_message(
                 println!("Player {} is shooting!", shooter_name);
                 
                 let start_pos = state.players.get(&addr).unwrap().position;
-                let target_x = start_pos.0 + direction.0 * SHOOT_RANGE;
-                let target_y = start_pos.1 + direction.1 * SHOOT_RANGE;
-
+                let end_pos = (
+                    start_pos.0 + direction.0 * SHOOT_RANGE,
+                    start_pos.1 + direction.1 * SHOOT_RANGE
+                );
+                
                 let mut hit_player = None;
+                let mut closest_distance = f32::MAX;
+                
                 for (player_addr, player) in state.players.iter_mut() {
                     if player_addr != &addr && player.is_alive {
-                        let dx = player.position.0 - start_pos.0;
-                        let dy = player.position.1 - start_pos.1;
-                        let distance = (dx * dx + dy * dy).sqrt();
-
-                        if distance <= SHOOT_RANGE {
-                            let t = (dx * direction.0 + dy * direction.1) / (direction.0 * direction.0 + direction.1 * direction.1);
-                            if t >= 0.0 && t <= 1.0 {
+                        let player_pos = player.position;
+                        
+                        // Calculer la distance du joueur à la ligne de tir
+                        let a = end_pos.1 - start_pos.1;
+                        let b = start_pos.0 - end_pos.0;
+                        let c = end_pos.0 * start_pos.1 - start_pos.0 * end_pos.1;
+                        
+                        let distance = (a * player_pos.0 + b * player_pos.1 + c).abs() / (a * a + b * b).sqrt();
+                        
+                        // Vérifier si le joueur est dans la portée et la direction du tir
+                        let dot_product = (player_pos.0 - start_pos.0) * direction.0 + (player_pos.1 - start_pos.1) * direction.1;
+                        
+                        if distance < 0.5 && dot_product > 0.0 && dot_product < SHOOT_RANGE {
+                            let player_distance = ((player_pos.0 - start_pos.0).powi(2) + (player_pos.1 - start_pos.1).powi(2)).sqrt();
+                            if player_distance < closest_distance {
+                                closest_distance = player_distance;
                                 hit_player = Some((player_addr.clone(), player.name.clone()));
-                                player.is_alive = false;
-                                break;
                             }
                         }
                     }
                 }
-
+                
                 if let Some((hit_addr, hit_name)) = hit_player {
+                    if let Some(player) = state.players.get_mut(&hit_addr) {
+                        player.is_alive = false;
+                    }
+                    
                     let shot_message = ServerMessage::PlayerShot { 
                         shooter: shooter_name.clone(),
                         target: hit_name.clone(),

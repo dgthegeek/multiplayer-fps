@@ -4,7 +4,22 @@ use serde::{Serialize, Deserialize};
 use tokio::runtime::Runtime;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::collections::HashMap;
+use bevy::ecs::system::ParamSet;
 
+const PLAYER_SPEED: f32 = 0.1;
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Default, States)]
+enum AppState {
+    #[default]
+    Loading,
+    RenderMap,
+    Playing,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+struct Map {
+    cells: Vec<Vec<bool>>,
+}
 
 #[derive(Component)]
 struct Player;
@@ -19,7 +34,8 @@ struct GameState {
     player_name: String,
     player_id: Option<String>,
     players: HashMap<String, (f32, f32)>,
-    map_size: (f32, f32),
+    map: Option<Map>,
+    map_rendered: bool,  
 }
 
 #[derive(Resource)]
@@ -36,7 +52,7 @@ enum ClientMessage {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 enum ServerMessage {
-    Welcome { map_size: (f32, f32), player_id: String },
+    Welcome { map: Map, player_id: String },
     GameState { players: HashMap<String, (f32, f32)> },
 }
 
@@ -59,45 +75,100 @@ fn main() {
     rt.block_on(async {
         let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
         socket.connect(&server_addr).await.unwrap();
-
+        println!("Connected to server at {}", server_addr);
         let join_message = ClientMessage::Join { name: player_name.clone() };
         let serialized = serde_json::to_string(&join_message).unwrap();
         socket.send(serialized.as_bytes()).await.unwrap();
+        println!("Join message sent to server");
 
         tokio::spawn(network_loop(socket, network_sender.clone(), client_receiver));
     });
 
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .insert_resource(GameState { 
-            player_name: player_name.clone(),
-            player_id: None,
-            players: HashMap::new(),
-            map_size: (0.0, 0.0),
-        })
-        .insert_resource(NetworkReceiver(network_receiver))
-        .insert_resource(NetworkSender(client_sender))
-        .add_startup_system(setup)
-        .add_system(player_input)
-        .add_system(handle_network_messages)
-        .run();
+        App::new()
+            .add_plugins(DefaultPlugins)
+            .add_state::<AppState>()
+            .insert_resource(GameState { 
+                player_name: player_name.clone(),
+                player_id: None,
+                players: HashMap::new(),
+                map: None,
+                map_rendered: false,
+            })
+            .insert_resource(NetworkReceiver(network_receiver))
+            .insert_resource(NetworkSender(client_sender))
+            .add_startup_system(setup_3d)
+            .add_system(handle_network_messages)
+            .add_system(player_input)
+            .add_system(update_player_positions)
+            .add_system(render_map.in_schedule(OnEnter(AppState::RenderMap)))
+            .run();
 }
 
-fn setup(mut commands: Commands) {
-    commands.spawn(Camera2dBundle::default());
+fn setup_3d(mut commands: Commands) {
+    // Ajout d'une lumière directionnelle
+    commands.spawn(DirectionalLightBundle {
+        directional_light: DirectionalLight {
+            shadows_enabled: true,
+            illuminance: 10000.0,
+            ..default()
+        },
+        transform: Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4)),
+        ..default()
+    });
+
+    // Ajout d'une lumière ambiante
+    commands.insert_resource(AmbientLight {
+        color: Color::WHITE,
+        brightness: 0.2,
+    });
+
+    // La caméra sera ajoutée plus tard, une fois que nous aurons la position du joueur
+}
+
+fn render_map(
+    mut commands: Commands,
+    mut game_state: ResMut<GameState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if let Some(map) = &game_state.map {
+        if !game_state.map_rendered {
+            for (y, row) in map.cells.iter().enumerate() {
+                for (x, &is_wall) in row.iter().enumerate() {
+                    if is_wall {
+                        commands.spawn(PbrBundle {
+                            mesh: meshes.add(Mesh::from(shape::Box::new(1.0, 3.0, 1.0))),
+                            material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
+                            transform: Transform::from_xyz(x as f32, 1.5, y as f32),
+                            ..default()
+                        });
+                    } else {
+                        commands.spawn(PbrBundle {
+                            mesh: meshes.add(Mesh::from(shape::Plane { size: 1.0, subdivisions: 0 })),
+                            material: materials.add(Color::rgb(0.3, 0.3, 0.3).into()),
+                            transform: Transform::from_xyz(x as f32, 0.0, y as f32),
+                            ..default()
+                        });
+                    }
+                }
+            }
+            game_state.map_rendered = true;
+        }
+    }
 }
 
 fn player_input(
     keyboard_input: Res<Input<KeyCode>>,
     network_sender: Res<NetworkSender>,
+    mut game_state: ResMut<GameState>,
 ) {
     let mut direction = (0.0, 0.0);
 
     if keyboard_input.pressed(KeyCode::W) || keyboard_input.pressed(KeyCode::Up) {
-        direction.1 += 1.0;
+        direction.1 -= 1.0;
     }
     if keyboard_input.pressed(KeyCode::S) || keyboard_input.pressed(KeyCode::Down) {
-        direction.1 -= 1.0;
+        direction.1 += 1.0;
     }
     if keyboard_input.pressed(KeyCode::A) || keyboard_input.pressed(KeyCode::Left) {
         direction.0 -= 1.0;
@@ -115,95 +186,122 @@ fn player_input(
         if let Err(e) = network_sender.0.send(move_message) {
             eprintln!("Failed to send move message: {}", e);
         }
+
+        // Séparer l'emprunt mutable et immuable
+        let player_id = game_state.player_id.clone();
+        if let Some(player_id) = player_id {
+            if let Some(position) = game_state.players.get_mut(&player_id) {
+                position.0 += direction.0 * PLAYER_SPEED;
+                position.1 += direction.1 * PLAYER_SPEED;
+            }
+        }
     }
 }
 
+
 fn handle_network_messages(
+    mut commands: Commands,
     mut game_state: ResMut<GameState>,
     network_receiver: Res<NetworkReceiver>,
-    mut commands: Commands,
-    mut query_set: ParamSet<(
-        Query<(Entity, &mut Transform), With<Player>>,
-        Query<(Entity, &mut Transform, &mut OtherPlayer)>,
-    )>,
 ) {
     for message in network_receiver.0.try_iter() {
+        println!("Received message: {:?}", message);
         match message {
-            ServerMessage::Welcome { map_size, player_id } => {
-                game_state.map_size = map_size;
+            ServerMessage::Welcome { map, player_id } => {
+                println!("Received Welcome message with map");
+                game_state.map = Some(map);
                 game_state.player_id = Some(player_id);
-                println!("Joined game. Map size: {:?}", map_size);
+                game_state.map_rendered = false;  // Force map re-render
+                
+                // Trigger map rendering
+                commands.insert_resource(NextState(Some(AppState::RenderMap)));
             }
             ServerMessage::GameState { players } => {
                 game_state.players = players;
-                update_player_entities(&mut commands, &game_state, &mut query_set);
             }
         }
     }
 }
 
-fn update_player_entities(
-    commands: &mut Commands,
-    game_state: &GameState,
-    query_set: &mut ParamSet<(
+
+fn update_player_positions(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    mut query_set: ParamSet<(
         Query<(Entity, &mut Transform), With<Player>>,
-        Query<(Entity, &mut Transform, &mut OtherPlayer)>,
+        Query<(Entity, &mut Transform, &OtherPlayer)>,
+        Query<(Entity, &mut Transform), With<Camera3d>>,
     )>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Mise à jour du joueur principal
     if let Some(player_id) = &game_state.player_id {
-        // Update the main player
         if let Some(&position) = game_state.players.get(player_id) {
             let mut player_query = query_set.p0();
-            if let Some((_, mut transform)) = player_query.iter_mut().next() {
-                transform.translation.x = position.0;
-                transform.translation.y = position.1;
+            let player_entity = if let Ok((entity, mut transform)) = player_query.get_single_mut() {
+                transform.translation = Vec3::new(position.0, 0.5, position.1);
+                entity
             } else {
                 commands.spawn((
-                    SpriteBundle {
-                        sprite: Sprite {
-                            color: Color::rgb(0.25, 0.25, 0.75),
-                            custom_size: Some(Vec2::new(50.0, 50.0)),
-                            ..default()
-                        },
-                        transform: Transform::from_translation(Vec3::new(position.0, position.1, 0.0)),
+                    PbrBundle {
+                        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.8 })),
+                        material: materials.add(Color::rgb(0.2, 0.7, 0.9).into()),
+                        transform: Transform::from_xyz(position.0, 0.5, position.1),
                         ..default()
                     },
                     Player,
+                )).id()
+            };
+
+            // Mise à jour de la caméra
+            let mut camera_query = query_set.p2();
+            if let Ok((_, mut camera_transform)) = camera_query.get_single_mut() {
+                let player_pos = Vec3::new(position.0, 0.5, position.1);
+                camera_transform.translation = player_pos + Vec3::new(0.0, 20.0, 0.0); // Placez la caméra 20 unités au-dessus du joueur
+                camera_transform.look_at(player_pos, Vec3::Z); // Regardez vers le bas
+            } else {
+                commands.spawn(Camera3dBundle {
+                    transform: Transform::from_xyz(position.0, 20.0, position.1)
+                        .looking_at(Vec3::new(position.0, 0.0, position.1), Vec3::Z),
+                    ..default()
+                });
+            }
+        }
+    }
+
+    // Mise à jour des autres joueurs
+    let mut other_players_to_remove = Vec::new();
+    {
+        let mut other_player_query = query_set.p1();
+        for (entity, mut transform, other_player) in other_player_query.iter_mut() {
+            if let Some(&position) = game_state.players.get(&other_player.name) {
+                transform.translation = Vec3::new(position.0, 0.5, position.1);
+            } else {
+                other_players_to_remove.push(entity);
+            }
+        }
+    }
+
+    // Suppression des joueurs qui ne sont plus dans le jeu
+    for entity in other_players_to_remove {
+        commands.entity(entity).despawn();
+    }
+
+    // Ajout des nouveaux autres joueurs
+    for (name, &position) in game_state.players.iter() {
+        if Some(name) != game_state.player_id.as_ref() {
+            let other_player_query = query_set.p1();
+            if !other_player_query.iter().any(|(_, _, op)| &op.name == name) {
+                commands.spawn((
+                    PbrBundle {
+                        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.8 })),
+                        material: materials.add(Color::rgb(0.9, 0.2, 0.3).into()),
+                        transform: Transform::from_xyz(position.0, 0.5, position.1),
+                        ..default()
+                    },
+                    OtherPlayer { name: name.clone() },
                 ));
-            }
-        }
-
-        // Update other players
-        let mut other_players_query = query_set.p1();
-        let mut existing_players: Vec<String> = other_players_query.iter().map(|(_, _, op)| op.name.clone()).collect();
-
-        for (name, &position) in game_state.players.iter() {
-            if name != player_id {
-                if let Some((_, mut transform, _)) = other_players_query.iter_mut().find(|(_, _, op)| &op.name == name) {
-                    transform.translation.x = position.0;
-                    transform.translation.y = position.1;
-                    existing_players.retain(|n| n != name);
-                } else {
-                    commands.spawn((
-                        SpriteBundle {
-                            sprite: Sprite {
-                                color: Color::rgb(0.75, 0.25, 0.25),
-                                custom_size: Some(Vec2::new(50.0, 50.0)),
-                                ..default()
-                            },
-                            transform: Transform::from_translation(Vec3::new(position.0, position.1, 0.0)),
-                            ..default()
-                        },
-                        OtherPlayer { name: name.clone() },
-                    ));
-                }
-            }
-        }
-
-        // Remove players that are no longer in the game
-        for name in existing_players {
-            if let Some((entity, _, _)) = other_players_query.iter().find(|(_, _, op)| op.name == name) {
-                commands.entity(entity).despawn();
             }
         }
     }
@@ -225,14 +323,18 @@ async fn network_loop(socket: UdpSocket, sender: Sender<ServerMessage>, receiver
         }
     });
 
-    let mut buf = [0u8; 1024];
+    let mut buf = vec![0u8; 4096]; 
     loop {
         match socket.recv(&mut buf).await {
             Ok(n) => {
+                println!("Received {} bytes from server", n);
                 if let Ok(message) = serde_json::from_slice::<ServerMessage>(&buf[..n]) {
+                    println!("Parsed server message: {:?}", message);
                     if let Err(e) = sender.send(message) {
                         eprintln!("Failed to send message to main thread: {}", e);
                     }
+                } else {
+                    eprintln!("Failed to parse server message");
                 }
             }
             Err(e) => eprintln!("Failed to receive data: {}", e),

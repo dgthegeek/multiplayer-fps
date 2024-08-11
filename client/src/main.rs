@@ -5,7 +5,6 @@ use tokio::runtime::Runtime;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::collections::HashMap;
 
-const MOVE_SPEED: f32 = 200.0;
 
 #[derive(Component)]
 struct Player;
@@ -18,6 +17,7 @@ struct OtherPlayer {
 #[derive(Resource)]
 struct GameState {
     player_name: String,
+    player_id: Option<String>,
     players: HashMap<String, (f32, f32)>,
     map_size: (f32, f32),
 }
@@ -36,8 +36,8 @@ enum ClientMessage {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 enum ServerMessage {
+    Welcome { map_size: (f32, f32), player_id: String },
     GameState { players: HashMap<String, (f32, f32)> },
-    MapInfo { size: (f32, f32) },
 }
 
 fn main() {
@@ -71,6 +71,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .insert_resource(GameState { 
             player_name: player_name.clone(),
+            player_id: None,
             players: HashMap::new(),
             map_size: (0.0, 0.0),
         })
@@ -79,7 +80,6 @@ fn main() {
         .add_startup_system(setup)
         .add_system(player_input)
         .add_system(handle_network_messages)
-        .add_system(update_player_positions)
         .run();
 }
 
@@ -89,7 +89,6 @@ fn setup(mut commands: Commands) {
 
 fn player_input(
     keyboard_input: Res<Input<KeyCode>>,
-    time: Res<Time>,
     network_sender: Res<NetworkSender>,
 ) {
     let mut direction = (0.0, 0.0);
@@ -112,12 +111,7 @@ fn player_input(
         direction.0 /= magnitude;
         direction.1 /= magnitude;
         
-        let movement = (
-            direction.0 * MOVE_SPEED * time.delta_seconds(),
-            direction.1 * MOVE_SPEED * time.delta_seconds()
-        );
-        
-        let move_message = ClientMessage::Move { direction: movement };
+        let move_message = ClientMessage::Move { direction };
         if let Err(e) = network_sender.0.send(move_message) {
             eprintln!("Failed to send move message: {}", e);
         }
@@ -135,13 +129,14 @@ fn handle_network_messages(
 ) {
     for message in network_receiver.0.try_iter() {
         match message {
+            ServerMessage::Welcome { map_size, player_id } => {
+                game_state.map_size = map_size;
+                game_state.player_id = Some(player_id);
+                println!("Joined game. Map size: {:?}", map_size);
+            }
             ServerMessage::GameState { players } => {
                 game_state.players = players;
                 update_player_entities(&mut commands, &game_state, &mut query_set);
-            }
-            ServerMessage::MapInfo { size } => {
-                game_state.map_size = size;
-                println!("Received map info: {:?}", size);
             }
         }
     }
@@ -155,14 +150,14 @@ fn update_player_entities(
         Query<(Entity, &mut Transform, &mut OtherPlayer)>,
     )>,
 ) {
-    let mut existing_players = HashMap::new();
-    for (entity, _, other_player) in query_set.p1().iter() {
-        existing_players.insert(other_player.name.clone(), entity);
-    }
-
-    for (name, &position) in game_state.players.iter() {
-        if name == &game_state.player_name {
-            if query_set.p0().is_empty() {
+    if let Some(player_id) = &game_state.player_id {
+        // Update the main player
+        if let Some(&position) = game_state.players.get(player_id) {
+            let mut player_query = query_set.p0();
+            if let Some((_, mut transform)) = player_query.iter_mut().next() {
+                transform.translation.x = position.0;
+                transform.translation.y = position.1;
+            } else {
                 commands.spawn((
                     SpriteBundle {
                         sprite: Sprite {
@@ -176,54 +171,40 @@ fn update_player_entities(
                     Player,
                 ));
             }
-        } else {
-            if let Some(&entity) = existing_players.get(name) {
-                if let Ok((_, mut transform, _)) = query_set.p1().get_mut(entity) {
+        }
+
+        // Update other players
+        let mut other_players_query = query_set.p1();
+        let mut existing_players: Vec<String> = other_players_query.iter().map(|(_, _, op)| op.name.clone()).collect();
+
+        for (name, &position) in game_state.players.iter() {
+            if name != player_id {
+                if let Some((_, mut transform, _)) = other_players_query.iter_mut().find(|(_, _, op)| &op.name == name) {
                     transform.translation.x = position.0;
                     transform.translation.y = position.1;
-                }
-            } else {
-                commands.spawn((
-                    SpriteBundle {
-                        sprite: Sprite {
-                            color: Color::rgb(0.75, 0.25, 0.25),
-                            custom_size: Some(Vec2::new(50.0, 50.0)),
+                    existing_players.retain(|n| n != name);
+                } else {
+                    commands.spawn((
+                        SpriteBundle {
+                            sprite: Sprite {
+                                color: Color::rgb(0.75, 0.25, 0.25),
+                                custom_size: Some(Vec2::new(50.0, 50.0)),
+                                ..default()
+                            },
+                            transform: Transform::from_translation(Vec3::new(position.0, position.1, 0.0)),
                             ..default()
                         },
-                        transform: Transform::from_translation(Vec3::new(position.0, position.1, 0.0)),
-                        ..default()
-                    },
-                    OtherPlayer { name: name.clone() },
-                ));
+                        OtherPlayer { name: name.clone() },
+                    ));
+                }
             }
         }
-    }
 
-    for (name, entity) in existing_players.iter() {
-        if !game_state.players.contains_key(name) {
-            commands.entity(*entity).despawn();
-        }
-    }
-}
-
-fn update_player_positions(
-    game_state: Res<GameState>,
-    mut query_set: ParamSet<(
-        Query<&mut Transform, With<Player>>,
-        Query<(&mut Transform, &OtherPlayer)>,
-    )>,
-) {
-    if let Some(&position) = game_state.players.get(&game_state.player_name) {
-        for mut transform in query_set.p0().iter_mut() {
-            transform.translation.x = position.0;
-            transform.translation.y = position.1;
-        }
-    }
-
-    for (mut transform, other_player) in query_set.p1().iter_mut() {
-        if let Some(&position) = game_state.players.get(&other_player.name) {
-            transform.translation.x = position.0;
-            transform.translation.y = position.1;
+        // Remove players that are no longer in the game
+        for name in existing_players {
+            if let Some((entity, _, _)) = other_players_query.iter().find(|(_, _, op)| op.name == name) {
+                commands.entity(entity).despawn();
+            }
         }
     }
 }

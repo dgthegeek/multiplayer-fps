@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use bevy::window::Window;
 use bevy::input::mouse::MouseMotion;
-
 use tokio::net::UdpSocket;
 use serde::{Serialize, Deserialize};
 use tokio::runtime::Runtime;
@@ -9,10 +8,12 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::collections::HashMap;
 use bevy::window::CursorGrabMode;
 use bevy::ecs::system::ParamSet;
+use bevy::asset::AssetServer;
+use bevy::scene::SceneBundle;
+
 
 const PLAYER_SPEED: f32 = 0.1;
 const SHOOT_COOLDOWN: f32 = 0.5; // Temps de recharge entre les tirs
-
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Default, States)]
 enum AppState {
     #[default]
@@ -21,32 +22,25 @@ enum AppState {
     Playing,
     GameOver,
 }
-
 #[derive(Resource)]
 struct MouseSensitivity(f32);
-
 #[derive(Component)]
 struct PlayerCamera;
-
 #[derive(Resource)]
 struct PlayerRotation {
     yaw: f32,
     pitch: f32,
 }
-
 #[derive(Clone, Serialize, Deserialize, Debug)]
 struct Map {
     cells: Vec<Vec<bool>>,
 }
-
 #[derive(Component)]
 struct Player;
-
 #[derive(Component)]
 struct OtherPlayer {
     name: String,
 }
-
 #[derive(Resource)]
 struct GameState {
     player_name: String,
@@ -58,20 +52,16 @@ struct GameState {
     is_alive: bool, 
     game_over_results: Option<(String, Vec<(String, u32)>)>, // (winner, scores)
 }
-
 #[derive(Resource)]
 struct NetworkReceiver(Receiver<ServerMessage>);
-
 #[derive(Resource)]
 struct NetworkSender(Sender<ClientMessage>);
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 enum ClientMessage {
     Join { name: String },
     Move { direction: (f32, f32) },
     Shoot { direction: (f32, f32) },
 }
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 enum ServerMessage {
     Welcome { map: Map, player_id: String },
@@ -80,7 +70,6 @@ enum ServerMessage {
     PlayerDied { player: String },
     GameOver { winner: String, scores: Vec<(String, u32)> },
 }
-
 fn main() {
     let mut input = String::new();
     
@@ -88,15 +77,12 @@ fn main() {
     std::io::stdin().read_line(&mut input).unwrap();
     let server_addr = input.trim().to_string();
     input.clear();
-
     println!("Enter Name: ");
     std::io::stdin().read_line(&mut input).unwrap();
     let player_name = input.trim().to_string();
-
     let rt = Runtime::new().unwrap();
     let (network_sender, network_receiver) = unbounded::<ServerMessage>();
     let (client_sender, client_receiver) = unbounded::<ClientMessage>();
-
     rt.block_on(async {
         let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
         socket.connect(&server_addr).await.unwrap();
@@ -105,10 +91,8 @@ fn main() {
         let serialized = serde_json::to_string(&join_message).unwrap();
         socket.send(serialized.as_bytes()).await.unwrap();
         println!("Join message sent to server");
-
         tokio::spawn(network_loop(socket, network_sender.clone(), client_receiver));
     });
-
         App::new()
             .add_plugins(DefaultPlugins)
             .add_state::<AppState>()
@@ -138,28 +122,24 @@ fn main() {
             .add_system(game_over_screen.in_schedule(OnEnter(AppState::GameOver)))
             .run();
 }
-
 fn setup_3d(mut commands: Commands) {
     // Ajout d'une lumière directionnelle
     commands.spawn(DirectionalLightBundle {
         directional_light: DirectionalLight {
-            shadows_enabled: true,
+            shadows_enabled: false,
             illuminance: 10000.0,
             ..default()
         },
         transform: Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4)),
         ..default()
     });
-
     // Ajout d'une lumière ambiante
     commands.insert_resource(AmbientLight {
         color: Color::WHITE,
-        brightness: 0.2,
+        brightness: 0.7,
     });
-
     // La caméra sera ajoutée plus tard, une fois que nous aurons la position du joueur
 }
-
 fn render_map(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
@@ -191,7 +171,6 @@ fn render_map(
         }
     }
 }
-
 fn player_input(
     keyboard_input: Res<Input<KeyCode>>,
     mouse_input: Res<Input<MouseButton>>,
@@ -202,16 +181,16 @@ fn player_input(
     player_rotation: Res<PlayerRotation>,
     camera_query: Query<&Transform, With<PlayerCamera>>,
 ) {
+    let _ = windows;
     if !game_state.is_alive {
         return;
     }
     
     let mut direction = Vec3::ZERO;
-
-    if keyboard_input.pressed(KeyCode::W) {
+    if keyboard_input.pressed(KeyCode::S) {
         direction += Vec3::new(player_rotation.yaw.sin(), 0.0, player_rotation.yaw.cos());
     }
-    if keyboard_input.pressed(KeyCode::S) {
+    if keyboard_input.pressed(KeyCode::W) {
         direction += Vec3::new(-player_rotation.yaw.sin(), 0.0, -player_rotation.yaw.cos());
     }
     if keyboard_input.pressed(KeyCode::A) {
@@ -220,14 +199,12 @@ fn player_input(
     if keyboard_input.pressed(KeyCode::D) {
         direction += Vec3::new(player_rotation.yaw.cos(), 0.0, -player_rotation.yaw.sin());
     }
-
     if direction != Vec3::ZERO {
         direction = direction.normalize();
         let move_message = ClientMessage::Move { direction: (direction.x, direction.z) };
         if let Err(e) = network_sender.0.send(move_message) {
             eprintln!("Failed to send move message: {}", e);
         }
-
         let player_id = game_state.player_id.clone();
         if let Some(player_id) = player_id {
             if let Some(position) = game_state.players.get_mut(&player_id) {
@@ -253,7 +230,6 @@ fn player_input(
         }
     }
 }
-
 #[derive(Resource)]
 struct CursorState {
     captured: bool,
@@ -288,8 +264,6 @@ fn toggle_cursor_capture(
         }
     }
 }
-
-
 fn handle_network_messages(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
@@ -339,7 +313,6 @@ fn handle_network_messages(
     }
 }
 
-
 fn update_player_positions(
     mut commands: Commands,
     game_state: Res<GameState>,
@@ -349,22 +322,23 @@ fn update_player_positions(
         Query<(Entity, &mut Transform, &OtherPlayer)>,
         Query<(Entity, &mut Transform), With<PlayerCamera>>,
     )>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     if let Some(player_id) = &game_state.player_id {
         if let Some(&(position_x, position_y, _)) = game_state.players.get(player_id) {
             let mut player_query = query_set.p0();
             let player_entity = if let Ok((entity, mut transform)) = player_query.get_single_mut() {
-                transform.translation = Vec3::new(position_x, 1.0, position_y); // Augmentez y à 1.0 pour la hauteur des yeux
+                transform.translation = Vec3::new(position_x, 0.0, position_y);
+                // Appliquez la rotation du joueur
                 transform.rotation = Quat::from_rotation_y(player_rotation.yaw);
                 entity
             } else {
                 commands.spawn((
-                    PbrBundle {
-                        mesh: meshes.add(Mesh::from(shape::Capsule::default())),
-                        material: materials.add(Color::rgb(0.2, 0.7, 0.9).into()),
-                        transform: Transform::from_xyz(position_x, 1.0, position_y),
+                    SceneBundle {
+                        scene: asset_server.load("models/player/scene.gltf#Scene0"),
+                        transform: Transform::from_xyz(position_x, 0.0, position_y)
+                            .with_rotation(Quat::from_rotation_y(player_rotation.yaw))
+                            .with_scale(Vec3::splat(0.005)),
                         ..default()
                     },
                     Player,
@@ -374,13 +348,14 @@ fn update_player_positions(
             // Mise à jour de la caméra
             let mut camera_query = query_set.p2();
             if let Ok((_, mut camera_transform)) = camera_query.get_single_mut() {
-                let player_pos = Vec3::new(position_x, 1.0, position_y);
-                camera_transform.translation = player_pos;
+                let eye_height = 0.8; // Réduisez cette valeur pour abaisser la caméra
+                camera_transform.translation = Vec3::new(position_x, eye_height, position_y);
                 camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, player_rotation.yaw, player_rotation.pitch, 0.0);
             } else {
                 commands.spawn((
                     Camera3dBundle {
-                        transform: Transform::from_xyz(position_x, 1.0, position_y),
+                        transform: Transform::from_xyz(position_x, 1.2, position_y)
+                            .looking_at(Vec3::new(position_x + player_rotation.yaw.sin(), 1.2, position_y + player_rotation.yaw.cos()), Vec3::Y),
                         ..default()
                     },
                     PlayerCamera,
@@ -389,13 +364,14 @@ fn update_player_positions(
         }
     }
 
+
     // Mise à jour des autres joueurs
     let mut other_players_to_remove = Vec::new();
     {
         let mut other_player_query = query_set.p1();
         for (entity, mut transform, other_player) in other_player_query.iter_mut() {
             if let Some(&(position_x, position_y, is_alive)) = game_state.players.get(&other_player.name) {
-                transform.translation = Vec3::new(position_x, 0.5, position_y);
+                transform.translation = Vec3::new(position_x, 0.005, position_y);
                 if !is_alive {
                     other_players_to_remove.push(entity);
                 }
@@ -416,10 +392,10 @@ fn update_player_positions(
             let other_player_query = query_set.p1();
             if !other_player_query.iter().any(|(_, _, op)| &op.name == name) {
                 commands.spawn((
-                    PbrBundle {
-                        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.8 })),
-                        material: materials.add(Color::rgb(0.9, 0.2, 0.3).into()),
-                        transform: Transform::from_xyz(position_x, 0.5, position_y),
+                    SceneBundle {
+                        scene: asset_server.load("models/player/scene.gltf#Scene0"),
+                        transform: Transform::from_xyz(position_x, 1.0, position_y)
+                            .with_scale(Vec3::splat(0.005)),
                         ..default()
                     },
                     OtherPlayer { name: name.clone() },
@@ -428,7 +404,6 @@ fn update_player_positions(
         }
     }
 }
-
 //gerer la rotation avec le souris
 fn player_look(
     mut motion_evr: EventReader<MouseMotion>,
@@ -444,11 +419,9 @@ fn player_look(
         player_rotation.pitch = player_rotation.pitch.clamp(-1.54, 1.54);
     }
 }
-
 async fn network_loop(socket: UdpSocket, sender: Sender<ServerMessage>, receiver: Receiver<ClientMessage>) {
     let socket = std::sync::Arc::new(socket);
     let send_socket = std::sync::Arc::clone(&socket);
-
     tokio::spawn(async move {
         loop {
             if let Ok(message) = receiver.try_recv() {
@@ -460,7 +433,6 @@ async fn network_loop(socket: UdpSocket, sender: Sender<ServerMessage>, receiver
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     });
-
     let mut buf = vec![0u8; 4096]; 
     loop {
         match socket.recv(&mut buf).await {
@@ -478,7 +450,6 @@ async fn network_loop(socket: UdpSocket, sender: Sender<ServerMessage>, receiver
         }
     }
 }
-
 fn game_over_screen(
     mut commands: Commands,
     game_state: Res<GameState>,
@@ -504,7 +475,6 @@ fn game_over_screen(
                     color: Color::WHITE,
                 },
             ));
-
             parent.spawn(TextBundle::from_section(
                 "Scores:",
                 TextStyle {
@@ -513,7 +483,6 @@ fn game_over_screen(
                     color: Color::WHITE,
                 },
             ));
-
             for (name, score) in scores {
                 parent.spawn(TextBundle::from_section(
                     format!("{}: {}", name, score),

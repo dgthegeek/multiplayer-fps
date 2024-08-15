@@ -7,17 +7,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use rand::Rng;
 use std::io::{self, Write};
-
 const MAP_WIDTH: usize = 20;
 const MAP_HEIGHT: usize = 20;
 const PLAYER_SPEED: f32 = 0.1;
 const SHOOT_RANGE: f32 = 10.0;
-
 #[derive(Clone, Serialize, Deserialize, Debug)]
 struct Map {
     cells: Vec<Vec<bool>>, // true pour un mur, false pour un espace vide
 }
-
 impl Map {
     fn new(difficulty: u8) -> Self {
         let mut rng = rand::thread_rng();
@@ -52,12 +49,10 @@ impl Map {
         
         Map { cells }
     }
-
     fn is_wall(&self, x: usize, y: usize) -> bool {
         self.cells[y][x]
     }
 }
-
 #[derive(Clone, Serialize, Deserialize, Debug)]
 struct Player {
     name: String,
@@ -65,14 +60,12 @@ struct Player {
     is_alive: bool,
     points: u32,
 }
-
 #[derive(Serialize, Deserialize, Debug)]
 enum ClientMessage {
     Join { name: String },
     Move { direction: (f32, f32) },
     Shoot { direction: (f32, f32) },
 }
-
 #[derive(Serialize, Deserialize, Debug)]
 enum ServerMessage {
     Welcome { map: Map, player_id: String, difficulty: u8 },
@@ -81,7 +74,6 @@ enum ServerMessage {
     PlayerDied { player: String },
     GameOver { winner: String, scores: Vec<(String, u32)> },
 }
-
 struct GameState {
     players: HashMap<SocketAddr, Player>,
     map: Map,
@@ -89,7 +81,6 @@ struct GameState {
     game_start_time: Instant,
     game_duration: Duration,
 }
-
 impl GameState {
     fn new(difficulty: u8) -> Self {
         Self {
@@ -97,15 +88,13 @@ impl GameState {
             map: Map::new(difficulty),
             difficulty,
             game_start_time: Instant::now(),
-            game_duration: Duration::from_secs(60), // 5 minutes
+            game_duration: Duration::from_secs(300), // 5 minutes
         }
     }
-
     fn is_game_over(&self) -> bool {
         self.game_start_time.elapsed() >= self.game_duration
     }
 }
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Choose difficulty level (1: Easy, 2: Medium, 3: Hard):");
@@ -114,11 +103,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     let difficulty: u8 = input.trim().parse().unwrap_or(2);
-
     let socket = UdpSocket::bind("0.0.0.0:34254").await?;
     let socket = Arc::new(socket);
     let game_state = Arc::new(Mutex::new(GameState::new(difficulty)));
-
     let game_state_clone = Arc::clone(&game_state);
     let socket_clone = Arc::clone(&socket);
     tokio::spawn(async move {
@@ -126,9 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Error in game over check: {}", e);
         }
     });
-
     println!("Server listening on {}", socket.local_addr()?);
-
     loop {
         let mut buf = vec![0u8; 4096]; 
         let (len, addr) = socket.recv_from(&mut buf).await?;
@@ -136,13 +121,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle_message(message, addr, Arc::clone(&game_state), Arc::clone(&socket)).await?;
     }
 }
-
 fn is_valid_move(map: &Map, x: f32, y: f32) -> bool {
     let cell_x = x.floor() as usize;
     let cell_y = y.floor() as usize;
     cell_x < MAP_WIDTH && cell_y < MAP_HEIGHT && !map.is_wall(cell_x, cell_y)
 }
-
 async fn handle_message(
     message: ClientMessage,
     addr: SocketAddr,
@@ -192,11 +175,11 @@ async fn handle_message(
             }
         }
         ClientMessage::Shoot { direction } => {
-            let shooter_name = state.players.get(&addr).map(|p| p.name.clone());
-            if let Some(shooter_name) = shooter_name {
-                println!("Player {} is shooting!", shooter_name);
+            let shooter = state.players.get(&addr).cloned();
+            if let Some(shooter) = shooter {
+                println!("Player {} is shooting!", shooter.name);
                 
-                let start_pos = state.players.get(&addr).unwrap().position;
+                let start_pos = shooter.position;
                 let end_pos = (
                     start_pos.0 + direction.0 * SHOOT_RANGE,
                     start_pos.1 + direction.1 * SHOOT_RANGE
@@ -205,25 +188,28 @@ async fn handle_message(
                 let mut hit_player = None;
                 let mut closest_distance = f32::MAX;
                 
-                for (player_addr, player) in state.players.iter_mut() {
+                for (player_addr, player) in state.players.iter() {
                     if player_addr != &addr && player.is_alive {
                         let player_pos = player.position;
                         
                         // Calculer la distance du joueur à la ligne de tir
-                        let a = end_pos.1 - start_pos.1;
-                        let b = start_pos.0 - end_pos.0;
-                        let c = end_pos.0 * start_pos.1 - start_pos.0 * end_pos.1;
+                        let to_player = (player_pos.0 - start_pos.0, player_pos.1 - start_pos.1);
+                        let dot_product = to_player.0 * direction.0 + to_player.1 * direction.1;
                         
-                        let distance = (a * player_pos.0 + b * player_pos.1 + c).abs() / (a * a + b * b).sqrt();
-                        
-                        // Vérifier si le joueur est dans la portée et la direction du tir
-                        let dot_product = (player_pos.0 - start_pos.0) * direction.0 + (player_pos.1 - start_pos.1) * direction.1;
-                        
-                        if distance < 0.5 && dot_product > 0.0 && dot_product < SHOOT_RANGE {
-                            let player_distance = ((player_pos.0 - start_pos.0).powi(2) + (player_pos.1 - start_pos.1).powi(2)).sqrt();
-                            if player_distance < closest_distance {
-                                closest_distance = player_distance;
-                                hit_player = Some((player_addr.clone(), player.name.clone()));
+                        if dot_product > 0.0 && dot_product < SHOOT_RANGE {
+                            let closest_point = (
+                                start_pos.0 + direction.0 * dot_product,
+                                start_pos.1 + direction.1 * dot_product
+                            );
+                            
+                            let distance = ((player_pos.0 - closest_point.0).powi(2) + (player_pos.1 - closest_point.1).powi(2)).sqrt();
+                            
+                            if distance < 1.0 { // Augmenté pour tenir compte de la taille du modèle
+                                let player_distance = ((player_pos.0 - start_pos.0).powi(2) + (player_pos.1 - start_pos.1).powi(2)).sqrt();
+                                if player_distance < closest_distance {
+                                    closest_distance = player_distance;
+                                    hit_player = Some((player_addr.clone(), player.name.clone()));
+                                }
                             }
                         }
                     }
@@ -238,7 +224,7 @@ async fn handle_message(
                     }
                     
                     let shot_message = ServerMessage::PlayerShot { 
-                        shooter: shooter_name.clone(),
+                        shooter: shooter.name.clone(),
                         target: hit_name.clone(),
                     };
                     let serialized = serde_json::to_string(&shot_message)?;
@@ -252,7 +238,9 @@ async fn handle_message(
                         socket.send_to(serialized.as_bytes(), addr).await?;
                     }
                     
-                    println!("Player {} was shot and killed by {}!", hit_name, shooter_name);
+                    println!("Player {} was shot and killed by {}!", hit_name, shooter.name);
+                } else {
+                    println!("Player {} missed their shot!", shooter.name);
                 }
             }
         }
@@ -260,7 +248,6 @@ async fn handle_message(
     broadcast_game_state(&state, &socket).await?;
     Ok(())
 }
-
 async fn broadcast_game_state(
     state: &GameState,
     socket: &Arc<UdpSocket>,
@@ -282,30 +269,24 @@ async fn broadcast_game_state(
     }
     Ok(())
 }
-
 async fn check_game_over(game_state: Arc<Mutex<GameState>>, socket: Arc<UdpSocket>) -> Result<(), Box<dyn std::error::Error>> {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
-
     loop {
         interval.tick().await;
         let mut state = game_state.lock().await;
-
         if state.is_game_over() {
             let winner = state.players.values()
                 .max_by_key(|p| p.points)
                 .cloned();
-
             if let Some(winner) = winner {
                 let game_over_message = ServerMessage::GameOver {
                     winner: winner.name,
                     scores: state.players.values().map(|p| (p.name.clone(), p.points)).collect(),
                 };
-
                 let serialized = serde_json::to_string(&game_over_message)?;
                 for addr in state.players.keys() {
                     socket.send_to(serialized.as_bytes(), addr).await?;
                 }
-
                 // Réinitialiser le jeu
                 *state = GameState::new(state.difficulty);
             }

@@ -250,11 +250,17 @@ async fn broadcast_game_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let players_state: HashMap<String, (f32, f32, bool)> = state.players
         .iter()
+        .filter(|(_, player)| player.is_alive)
         .map(|(_, player)| (player.name.clone(), (player.position.0, player.position.1, player.is_alive)))
         .collect();
     let game_state_message = ServerMessage::GameState { players: players_state.clone() };
     let serialized = serde_json::to_string(&game_state_message)?;
-    println!("broadcasting gamestate");
+    
+    println!("Broadcasting GameState:");
+    for (name, (x, y, is_alive)) in &players_state {
+        println!("  Player: {}, Position: ({}, {}), Alive: {}", name, x, y, is_alive);
+    }
+    
     for addr in state.players.keys() {
         socket.send_to(serialized.as_bytes(), addr).await?;
     }

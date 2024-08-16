@@ -369,9 +369,8 @@ fn update_player_positions(
     let mut other_players_to_remove = Vec::new();
     {
         let mut other_player_query = query_set.p1();
-        for (entity, mut transform, other_player) in other_player_query.iter_mut() {
-            if let Some(&(position_x, position_y, is_alive)) = game_state.players.get(&other_player.name) {
-                transform.translation = Vec3::new(position_x, 0.005, position_y);
+        for (entity, _, other_player) in other_player_query.iter_mut() {
+            if let Some(&(_, _, is_alive)) = game_state.players.get(&other_player.name) {
                 if !is_alive {
                     other_players_to_remove.push(entity);
                 }
@@ -383,18 +382,24 @@ fn update_player_positions(
 
     // Suppression des joueurs morts ou qui ne sont plus dans le jeu
     for entity in other_players_to_remove {
-        commands.entity(entity).despawn();
+        commands.entity(entity).despawn_recursive();
     }
 
-    // Ajout des nouveaux autres joueurs
+    // Ajout ou mise à jour des joueurs vivants
     for (name, &(position_x, position_y, is_alive)) in game_state.players.iter() {
         if Some(name) != game_state.player_id.as_ref() && is_alive {
-            let other_player_query = query_set.p1();
-            if !other_player_query.iter().any(|(_, _, op)| &op.name == name) {
+            let mut other_player_query = query_set.p1();
+            let existing_player = other_player_query.iter_mut().find(|(_, _, op)| &op.name == name);
+            
+            if let Some((entity, mut transform, _)) = existing_player {
+                // Mise à jour de la position du joueur existant
+                transform.translation = Vec3::new(position_x, 0.0, position_y);
+            } else {
+                // Création d'un nouveau joueur
                 commands.spawn((
                     SceneBundle {
                         scene: asset_server.load("models/player/scene.gltf#Scene0"),
-                        transform: Transform::from_xyz(position_x, 1.0, position_y)
+                        transform: Transform::from_xyz(position_x, 0.0, position_y)
                             .with_scale(Vec3::splat(0.005)),
                         ..default()
                     },

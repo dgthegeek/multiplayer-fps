@@ -41,6 +41,12 @@ struct Player;
 struct OtherPlayer {
     name: String,
 }
+
+#[derive(Component)]
+struct Bullet {
+    lifetime: Timer,
+}
+
 #[derive(Resource)]
 struct GameState {
     player_name: String,
@@ -108,6 +114,7 @@ fn main() {
             })
             .add_system(display_death_screen)
             .insert_resource(NetworkReceiver(network_receiver))
+            .add_system(update_bullets)
             .insert_resource(NetworkSender(client_sender))
             .add_startup_system(setup_3d)
             .add_system(handle_network_messages)
@@ -181,6 +188,9 @@ fn player_input(
     time: Res<Time>,
     player_rotation: Res<PlayerRotation>,
     camera_query: Query<&Transform, With<PlayerCamera>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let _ = windows;
     if !game_state.is_alive {
@@ -215,22 +225,68 @@ fn player_input(
         }
     }
     // Gestion du tir
-    if mouse_input.just_pressed(MouseButton::Left) {
-        let current_time = time.elapsed_seconds();
-        if current_time - game_state.last_shoot_time >= SHOOT_COOLDOWN {
-            game_state.last_shoot_time = current_time;
-            
-            if let Ok(camera_transform) = camera_query.get_single() {
-                let shoot_direction = camera_transform.forward();
-                let shoot_message = ClientMessage::Shoot { direction: (shoot_direction.x, shoot_direction.z) };
-                if let Err(e) = network_sender.0.send(shoot_message) {
-                    eprintln!("Failed to send shoot message: {}", e);
-                }
-                println!("Player shot in direction: {:?}", (shoot_direction.x, shoot_direction.z));
+if mouse_input.just_pressed(MouseButton::Left) {
+    let current_time = time.elapsed_seconds();
+    if current_time - game_state.last_shoot_time >= SHOOT_COOLDOWN {
+        game_state.last_shoot_time = current_time;
+        
+        if let Ok(camera_transform) = camera_query.get_single() {
+            let shoot_direction = camera_transform.forward();
+            let shoot_message = ClientMessage::Shoot { direction: (shoot_direction.x, shoot_direction.z) };
+            if let Err(e) = network_sender.0.send(shoot_message) {
+                eprintln!("Failed to send shoot message: {}", e);
             }
+            println!("Player shot in direction: {:?}", (shoot_direction.x, shoot_direction.z));
+
+            let spawn_point = camera_transform.translation + shoot_direction * 2.0;
+            
+            // Calculer la rotation pour aligner la capsule horizontalement
+            let up = Vec3::Y;
+            let _right = shoot_direction.cross(up).normalize();
+            let bullet_rotation = Quat::from_rotation_arc(Vec3::Z, shoot_direction);
+
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes.add(Mesh::from(shape::Capsule { 
+                        radius: 0.05, 
+                        rings: 0, 
+                        depth: 0.5,  
+                        latitudes: 8, 
+                        longitudes: 18, 
+                        uv_profile: shape::CapsuleUvProfile::Uniform,
+                    })),
+                    material: materials.add(Color::RED.into()),
+                    transform: Transform::from_translation(spawn_point)
+                        .with_rotation(bullet_rotation * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)), // Rotation pour rendre la capsule horizontale
+                    ..default()
+                },
+                Bullet {
+                    lifetime: Timer::from_seconds(0.2, TimerMode::Once),
+                },
+            ));
         }
     }
 }
+
+
+}
+
+fn update_bullets(
+    mut commands: Commands,
+    mut bullets: Query<(Entity, &mut Transform, &mut Bullet)>,
+    time: Res<Time>,
+) {
+    for (entity, transform, mut bullet) in bullets.iter_mut() {
+        bullet.lifetime.tick(time.delta());
+        if bullet.lifetime.finished() {
+            commands.entity(entity).despawn();
+        } else {
+            let new_translation = transform.translation + transform.forward() * 50.0 * time.delta_seconds();
+            commands.entity(entity).insert(Transform::from_translation(new_translation).with_rotation(transform.rotation));
+        }
+    }
+}
+
 #[derive(Resource)]
 struct CursorState {
     captured: bool,
@@ -328,7 +384,7 @@ fn update_player_positions(
     if let Some(player_id) = &game_state.player_id {
         if let Some(&(position_x, position_y, _)) = game_state.players.get(player_id) {
             let mut player_query = query_set.p0();
-            let player_entity = if let Ok((entity, mut transform)) = player_query.get_single_mut() {
+            let _player_entity = if let Ok((entity, mut transform)) = player_query.get_single_mut() {
                 transform.translation = Vec3::new(position_x, 0.0, position_y);
                 // Appliquez la rotation du joueur
                 transform.rotation = Quat::from_rotation_y(player_rotation.yaw);
@@ -391,7 +447,7 @@ fn update_player_positions(
             let mut other_player_query = query_set.p1();
             let existing_player = other_player_query.iter_mut().find(|(_, _, op)| &op.name == name);
             
-            if let Some((entity, mut transform, _)) = existing_player {
+            if let Some((_entity, mut transform, _)) = existing_player {
                 // Mise à jour de la position du joueur existant
                 transform.translation = Vec3::new(position_x, 0.0, position_y);
             } else {

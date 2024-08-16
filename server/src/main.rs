@@ -88,7 +88,7 @@ impl GameState {
             map: Map::new(difficulty),
             difficulty,
             game_start_time: Instant::now(),
-            game_duration: Duration::from_secs(100), // 5 minutes
+            game_duration: Duration::from_secs(120), // 5 minutes
         }
     }
     fn is_game_over(&self) -> bool {

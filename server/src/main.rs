@@ -88,7 +88,7 @@ impl GameState {
             map: Map::new(difficulty),
             difficulty,
             game_start_time: Instant::now(),
-            game_duration: Duration::from_secs(300), // 5 minutes
+            game_duration: Duration::from_secs(100), // 5 minutes
         }
     }
     fn is_game_over(&self) -> bool {
@@ -200,7 +200,7 @@ async fn handle_message(
                             
                             let distance = ((player_pos.0 - closest_point.0).powi(2) + (player_pos.1 - closest_point.1).powi(2)).sqrt();
                             
-                            if distance < 0.1 { // Augmenté pour tenir compte de la taille du modèle
+                            if distance < 0.5 { // Augmenté pour tenir compte de la taille du modèle
                                 let player_distance = ((player_pos.0 - start_pos.0).powi(2) + (player_pos.1 - start_pos.1).powi(2)).sqrt();
                                 if player_distance < closest_distance {
                                     closest_distance = player_distance;
@@ -254,12 +254,7 @@ async fn broadcast_game_state(
         .collect();
     let game_state_message = ServerMessage::GameState { players: players_state.clone() };
     let serialized = serde_json::to_string(&game_state_message)?;
-    
-    println!("Broadcasting GameState:");
-    for (name, (x, y, is_alive)) in &players_state {
-        println!("  Player: {}, Position: ({}, {}), Alive: {}", name, x, y, is_alive);
-    }
-    
+    println!("broadcasting gamestate");
     for addr in state.players.keys() {
         socket.send_to(serialized.as_bytes(), addr).await?;
     }

@@ -45,11 +45,11 @@ struct OtherPlayer {
 struct GameState {
     player_name: String,
     player_id: Option<String>,
-    players: HashMap<String, (f32, f32, bool)>, 
+    players: HashMap<String, (f32, f32, bool)>, // Ajout de l'état is_alive
     map: Option<Map>,
     map_rendered: bool,
     last_shoot_time: f32,
-    is_alive: bool, 
+    is_alive: bool, // Nouvel état pour le joueur local
     game_over_results: Option<(String, Vec<(String, u32)>)>, // (winner, scores)
 }
 #[derive(Resource)]
@@ -106,6 +106,7 @@ fn main() {
                 is_alive: true,
                 game_over_results: None,
             })
+            .add_system(display_death_screen)
             .insert_resource(NetworkReceiver(network_receiver))
             .insert_resource(NetworkSender(client_sender))
             .add_startup_system(setup_3d)
@@ -364,7 +365,6 @@ fn update_player_positions(
         }
     }
 
-
     // Mise à jour des autres joueurs
     let mut other_players_to_remove = Vec::new();
     {
@@ -403,6 +403,7 @@ fn update_player_positions(
             }
         }
     }
+    
 }
 //gerer la rotation avec le souris
 fn player_look(
@@ -493,6 +494,35 @@ fn game_over_screen(
                     },
                 ));
             }
+        });
+    }
+}
+
+fn display_death_screen(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    asset_server: Res<AssetServer>,
+) {
+    if !game_state.is_alive {
+        commands.spawn(NodeBundle {
+            style: Style {
+                size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
+                position_type: PositionType::Absolute,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            background_color: Color::rgba(0.0, 0.0, 0.0, 0.8).into(),
+            ..default()
+        }).with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                "You were killed!",
+                TextStyle {
+                    font: asset_server.load("fonts/FiraSans-Medium.ttf"),
+                    font_size: 40.0,
+                    color: Color::RED,
+                },
+            ));
         });
     }
 }

@@ -38,20 +38,17 @@ pub async fn handle_message(
             broadcast_game_state(&state, &socket).await?;
         }
         ClientMessage::Move { direction } => {
-            let new_position = {
-                if let Some(player) = state.players.get(&addr) {
-                    let new_x = player.position.0 + direction.0 * PLAYER_SPEED;
-                    let new_y = player.position.1 + direction.1 * PLAYER_SPEED;
-                    if is_valid_move(&state.map, new_x, new_y) {
-                        Some((new_x, new_y))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+            let mut new_position = None;
+            
+            if let Some(player) = state.players.get(&addr) {
+                let new_x = player.position.0 + direction.0 * PLAYER_SPEED;
+                let new_y = player.position.1 + direction.1 * PLAYER_SPEED;
+                
+                if is_valid_move(&state.map, new_x, new_y) {
+                    new_position = Some((new_x, new_y));
                 }
-            };
-        
+            }
+            
             if let Some(new_pos) = new_position {
                 if let Some(player) = state.players.get_mut(&addr) {
                     player.position = new_pos;

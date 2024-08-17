@@ -2094,6 +2094,7 @@ dependencies = [
  "bevy",
  "bincode",
  "crossbeam-channel",
+ "rand",
  "serde",
  "serde_json",
  "tokio",

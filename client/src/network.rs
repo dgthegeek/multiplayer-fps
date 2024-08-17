@@ -1,35 +1,26 @@
 use std::net::UdpSocket;
-
 use bevy::prelude::*;
 use crate::messages::{ClientMessage, ServerMessage};
 use crate::game_state::{GameState, AppState};
 use crossbeam_channel::{unbounded, Receiver, Sender};
-
 #[derive(Resource)]
 pub struct NetworkReceiver(pub Receiver<ServerMessage>);
-
 #[derive(Resource)]
 pub struct NetworkSender(pub Sender<ClientMessage>);
-
 use std::sync::Arc;
-
 pub async fn setup_network(server_addr: &str, player_name: &str) -> Result<(Sender<ServerMessage>, Receiver<ServerMessage>, Sender<ClientMessage>), Box<dyn std::error::Error>> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(server_addr)?;
     println!("Connected to server at {}", server_addr);
-
     let (network_sender, network_receiver) = unbounded::<ServerMessage>();
     let (client_sender, client_receiver) = unbounded::<ClientMessage>();
-
     let socket = Arc::new(socket);
     let send_socket = Arc::clone(&socket);
-
     // Envoyer le message de connexion
     let join_message = ClientMessage::Join { name: player_name.to_string() };
     let serialized = serde_json::to_string(&join_message)?;
     socket.send(serialized.as_bytes())?;
     println!("Join message sent to server");
-
     // Clone network_sender pour l'utiliser dans la boucle de réception
     let network_sender_clone = network_sender.clone();
     
@@ -51,7 +42,6 @@ pub async fn setup_network(server_addr: &str, player_name: &str) -> Result<(Send
             }
         }
     });
-
     // Lancer la boucle d'envoi
     tokio::spawn(async move {
         loop {
@@ -64,10 +54,8 @@ pub async fn setup_network(server_addr: &str, player_name: &str) -> Result<(Send
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     });
-
     Ok((network_sender, network_receiver, client_sender))
 }
-
 
 pub(crate) fn handle_network_messages(
     mut commands: Commands,

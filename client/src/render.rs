@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use crate::game_state::GameState;
 use crate::player::{Player, OtherPlayer};
 use crate::camera::{PlayerCamera, PlayerRotation};
-
 pub fn setup_3d(mut commands: Commands) {
     // Ajout d'une lumière directionnelle
     commands.spawn(DirectionalLightBundle {
@@ -21,7 +20,6 @@ pub fn setup_3d(mut commands: Commands) {
     });
     // La caméra sera ajoutée plus tard, une fois que nous aurons la position du joueur
 }
-
 pub fn render_map(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
@@ -53,7 +51,6 @@ pub fn render_map(
         }
     }
 }
-
 pub fn update_player_positions(
     mut commands: Commands,
     game_state: Res<GameState>,
@@ -70,10 +67,8 @@ pub fn update_player_positions(
             let mut player_query = query_set.p0();
             let _player_entity = if let Ok((entity, mut transform)) = player_query.get_single_mut() {
                 transform.translation = Vec3::new(position_x, 0.0, position_y);
-
-                // Appliquez une rotation de 180 degrés (π radians)
+                // Appliquez une rotation de 180 degrés
                 transform.rotation = Quat::from_rotation_y(player_rotation.yaw + std::f32::consts::PI);
-
                 entity
             } else {
                 commands.spawn((
@@ -87,10 +82,8 @@ pub fn update_player_positions(
                     Player,
                 )).id()
             };
-
             let eye_height = 1.0; // Hauteur de la nuque
             let forward_offset = 0.01; // Léger décalage vers l'arrière
-
             // Mise à jour de la caméra
             let mut camera_query = query_set.p2();
             if let Ok((_, mut camera_transform)) = camera_query.get_single_mut() {
@@ -100,7 +93,6 @@ pub fn update_player_positions(
                     eye_height,
                     position_y - forward_offset * player_rotation.yaw.cos()
                 );
-
                 camera_transform.translation = new_camera_position;
                 // Corriger la rotation pour regarder vers l'avant
                 camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, player_rotation.yaw, player_rotation.pitch, 0.0);
@@ -120,7 +112,6 @@ pub fn update_player_positions(
             }
         }
     }
-
     // Mise à jour des autres joueurs
     let mut other_players_to_remove = Vec::new();
     {
@@ -135,12 +126,10 @@ pub fn update_player_positions(
             }
         }
     }
-
     // Suppression des joueurs morts ou qui ne sont plus dans le jeu
     for entity in other_players_to_remove {
         commands.entity(entity).despawn_recursive();
     }
-
     // Ajout ou mise à jour des joueurs vivants
     for (name, &(position_x, position_y, is_alive)) in game_state.players.iter() {
         if Some(name) != game_state.player_id.as_ref() && is_alive {

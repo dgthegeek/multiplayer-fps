@@ -26,4 +26,5 @@ impl GameState {
     pub fn is_game_over(&self) -> bool {
         self.game_start_time.elapsed() >= self.game_duration
     }
+    
 }

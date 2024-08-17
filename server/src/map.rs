@@ -45,6 +45,18 @@ impl Map {
     fn is_wall(&self, x: usize, y: usize) -> bool {
         self.cells[y][x]
     }
+
+    pub fn generate_valid_spawn_point(&self) -> (f32, f32) {
+        let mut rng = rand::thread_rng();
+        loop {
+            let x = rng.gen_range(1..MAP_WIDTH - 1) as f32 + 0.5;
+            let y = rng.gen_range(1..MAP_HEIGHT - 1) as f32 + 0.5;
+            if !self.is_wall(x as usize, y as usize) {
+                return (x, y);
+            }
+        }
+    }
+    
 }
 
 pub fn is_valid_move(map: &Map, x: f32, y: f32) -> bool {

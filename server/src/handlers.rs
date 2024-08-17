@@ -19,9 +19,10 @@ pub async fn handle_message(
     match message {
         ClientMessage::Join { name } => {
             println!("Player connected: {} (IP: {})", name, addr);
+            let spawn_position = state.map.generate_valid_spawn_point();
             let player = Player {
                 name: name.clone(),
-                position: (1.0, 1.0),
+                position: spawn_position,
                 is_alive: true,
                 points: 0
             };

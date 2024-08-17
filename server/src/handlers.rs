@@ -81,7 +81,7 @@ pub async fn handle_message(
                             
                             let distance = ((player_pos.0 - closest_point.0).powi(2) + (player_pos.1 - closest_point.1).powi(2)).sqrt();
                             
-                            if distance < 0.5 { // Augmenté pour tenir compte de la taille du modèle
+                            if distance < 0.2 { // Augmenté pour tenir compte de la taille du modèle
                                 let player_distance = ((player_pos.0 - start_pos.0).powi(2) + (player_pos.1 - start_pos.1).powi(2)).sqrt();
                                 if player_distance < closest_distance {
                                     closest_distance = player_distance;

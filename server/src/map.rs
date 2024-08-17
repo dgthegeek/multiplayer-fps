@@ -22,43 +22,39 @@ impl Map {
             }
         }
 
-        // Générer des murs longs horizontaux et verticaux
+        // Générer uniquement des murs longs horizontaux et verticaux
         let num_walls = match difficulty {
-            1 => 5,
-            2 => 8,
-            3 => 12,
-            _ => 8,
+            1 => 7,
+            2 => 10,
+            3 => 15,
+            _ => 10,
         };
 
         for _ in 0..num_walls {
             if rng.gen_bool(0.5) {
-                // Mur horizontal
-                let y = rng.gen_range(2..MAP_HEIGHT-2);
-                let start = rng.gen_range(2..MAP_WIDTH/3);
-                let end = rng.gen_range(2*MAP_WIDTH/3..MAP_WIDTH-2);
-                for x in start..end {
+                // Mur horizontal long
+                let y = rng.gen_range(3..MAP_HEIGHT-3);
+                for x in 1..MAP_WIDTH-1 {
                     cells[y][x] = true;
                 }
             } else {
-                // Mur vertical
-                let x = rng.gen_range(2..MAP_WIDTH-2);
-                let start = rng.gen_range(2..MAP_HEIGHT/3);
-                let end = rng.gen_range(2*MAP_HEIGHT/3..MAP_HEIGHT-2);
-                for y in start..end {
+                // Mur vertical long
+                let x = rng.gen_range(3..MAP_WIDTH-3);
+                for y in 1..MAP_HEIGHT-1 {
                     cells[y][x] = true;
                 }
             }
         }
 
-        // Ajouter des ouvertures plus larges dans les murs pour créer des passages
-        let num_openings = num_walls * 3;
-        for _ in 0..num_openings {
-            let x = rng.gen_range(2..MAP_WIDTH-2);
-            let y = rng.gen_range(2..MAP_HEIGHT-2);
+        // Ajouter des brèches larges dans les murs
+        let num_breaches = num_walls * 2;  // Augmenté pour plus de passages
+        for _ in 0..num_breaches {
+            let x = rng.gen_range(3..MAP_WIDTH-3);
+            let y = rng.gen_range(3..MAP_HEIGHT-3);
             
-            // Créer une ouverture plus large
-            for dx in -1..=1 {
-                for dy in -1..=1 {
+            // Créer une brèche large
+            for dx in -3..=3 {  // Augmenté à 7x7 pour des brèches plus larges
+                for dy in -3..=3 {
                     let nx = (x as i32 + dx) as usize;
                     let ny = (y as i32 + dy) as usize;
                     if nx > 0 && nx < MAP_WIDTH-1 && ny > 0 && ny < MAP_HEIGHT-1 {
@@ -88,7 +84,7 @@ impl Map {
     
 }
 
-const PLAYER_SIZE: f32 = 0.7; // Ajustez cette valeur selon la taille de votre joueur
+const PLAYER_SIZE: f32 = 0.5; // Ajustez cette valeur selon la taille de votre joueur
 pub fn is_valid_move(map: &Map, x: f32, y: f32) -> bool {
     let check_point = |px: f32, py: f32| -> bool {
         let cell_x = px.floor() as usize;

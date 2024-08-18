@@ -9,4 +9,5 @@ pub struct Player {
     pub position: (f32, f32),
     pub is_alive: bool,
     pub points: u32,
+    pub  rotation: f32
 }

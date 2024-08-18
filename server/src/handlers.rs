@@ -23,6 +23,7 @@ pub async fn handle_message(
             let player = Player {
                 name: name.clone(),
                 position: spawn_position,
+                rotation: 0.0,  // Ajoutez une rotation initiale
                 is_alive: true,
                 points: 0
             };
@@ -39,6 +40,7 @@ pub async fn handle_message(
         }
         ClientMessage::Move { direction } => {
             let mut new_position = None;
+            let mut new_rotation = None;
             
             if let Some(player) = state.players.get(&addr) {
                 let new_x = player.position.0 + direction.0 * PLAYER_SPEED;
@@ -47,11 +49,19 @@ pub async fn handle_message(
                 if is_valid_move(&state.map, new_x, new_y) {
                     new_position = Some((new_x, new_y));
                 }
+
+                // Calculer la nouvelle rotation basée sur la direction du mouvement
+                if direction.0 != 0.0 || direction.1 != 0.0 {
+                    new_rotation = Some(direction.1.atan2(direction.0));
+                }
             }
             
             if let Some(new_pos) = new_position {
                 if let Some(player) = state.players.get_mut(&addr) {
                     player.position = new_pos;
+                    if let Some(rot) = new_rotation {
+                        player.rotation = rot;
+                    }
                 }
             }
         }
@@ -126,21 +136,20 @@ pub async fn handle_message(
     Ok(())
 }
 
-
 pub async fn broadcast_game_state(
     state: &GameState,
     socket: &Arc<UdpSocket>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let players_state: HashMap<String, (f32, f32, bool)> = state.players
+    let players_state: HashMap<String, (f32, f32, f32, bool)> = state.players
         .iter()
-        .filter(|(_, player)| player.is_alive)
-        .map(|(_, player)| (player.name.clone(), (player.position.0, player.position.1, player.is_alive)))
+        .map(|(_, player)| (player.name.clone(), (player.position.0, player.position.1, player.rotation, player.is_alive)))
         .collect();
+
     let game_state_message = ServerMessage::GameState { players: players_state.clone() };
     let serialized = serde_json::to_string(&game_state_message)?;
     
     println!("Broadcasting GameState:");
-    for (name, (x, y, is_alive)) in &players_state {
+    for (name, (x, y, _, is_alive)) in &players_state {
         println!("  Player: {}, Position: ({}, {}), Alive: {}", name, x, y, is_alive);
     }
     

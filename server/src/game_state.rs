@@ -10,6 +10,7 @@ pub struct GameState {
     pub difficulty: u8,
     pub game_start_time: Instant,
     pub game_duration: Duration,
+    pub rotation: f32,
 }
 
 impl GameState {
@@ -20,6 +21,7 @@ impl GameState {
             difficulty,
             game_start_time: Instant::now(),
             game_duration: Duration::from_secs(120), // 2 minutes
+            rotation: 0.0,
         }
     }
 

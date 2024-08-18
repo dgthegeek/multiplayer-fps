@@ -15,7 +15,7 @@ pub enum AppState {
 pub struct GameState {
     pub player_name: String,
     pub player_id: Option<String>,
-    pub players: HashMap<String, (f32, f32, bool)>,
+    pub players: HashMap<String, (f32, f32, f32, bool)>,  // x, y, rotation, is_alive
     pub map: Option<Map>,
     pub map_rendered: bool,
     pub last_shoot_time: f32,

@@ -68,14 +68,14 @@ pub fn update_player_positions(
                 let mut player_query = query_set.p0();
                 let _player_entity = if let Ok((entity, mut transform)) = player_query.get_single_mut() {
                     transform.translation = Vec3::new(position_x, 0.0, position_y);
-                    transform.rotation = Quat::from_rotation_y(player_rotation.yaw);
+                    transform.rotation = Quat::from_rotation_y(player_rotation.yaw + std::f32::consts::PI);
                     entity
                 } else {
                     commands.spawn((
                         SceneBundle {
                             scene: asset_server.load("models/player/Soldier.glb#Scene0"),
                             transform: Transform::from_xyz(position_x, 0.0, position_y)
-                                .with_rotation(Quat::from_rotation_y(player_rotation.yaw))
+                                .with_rotation(Quat::from_rotation_y(player_rotation.yaw + std::f32::consts::PI)) // Rotation de 180 degrés
                                 .with_scale(Vec3::splat(0.03)),
                             ..default()
                         },

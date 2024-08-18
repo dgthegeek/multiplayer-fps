@@ -20,7 +20,7 @@ impl GameState {
             map: Map::new(difficulty),
             difficulty,
             game_start_time: Instant::now(),
-            game_duration: Duration::from_secs(120), // 2 minutes
+            game_duration: Duration::from_secs(300), // 2 minutes
             rotation: 0.0,
         }
     }

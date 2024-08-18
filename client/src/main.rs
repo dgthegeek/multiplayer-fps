@@ -15,6 +15,7 @@ use camera::{MouseSensitivity, PlayerRotation};
 use input::CursorState;
 use std::io::{self, Write};
 use tokio::runtime::Runtime;
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 
 fn main() -> io::Result<()> {
     println!("Enter server IP:port (e.g., 127.0.0.1:34254): ");
@@ -36,15 +37,19 @@ fn main() -> io::Result<()> {
 
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_state::<AppState>()
         .insert_resource(GameState::new(player_name))
         .insert_resource(NetworkReceiver(network_receiver))
         .insert_resource(NetworkSender(client_sender))
         .add_startup_system(render::setup_3d)
+        .add_startup_system(ui::setup_ui.after(render::setup_3d))
         .add_system(network::handle_network_messages)
         .add_system(input::player_input)
         .add_system(render::update_player_positions)
         .add_system(render::render_map.in_schedule(OnEnter(AppState::RenderMap)))
+        .add_system(ui::update_minimap)  
+        .add_system(ui::update_fps_text)  
         .insert_resource(MouseSensitivity(0.005))
         .insert_resource(PlayerRotation::default())
         .add_system(input::player_look)

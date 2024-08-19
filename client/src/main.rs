@@ -44,21 +44,23 @@ fn main() -> io::Result<()> {
         .insert_resource(NetworkSender(client_sender))
         .add_startup_system(render::setup_3d)
         .add_startup_system(ui::setup_ui.after(render::setup_3d))
-        .add_system(network::handle_network_messages)
-        .add_system(input::player_input)
-        .add_system(render::update_player_positions)
+        .add_systems((
+            network::handle_network_messages,
+            input::player_input,
+            render::update_player_positions,
+            ui::update_minimap,
+            ui::update_fps_text,
+            input::player_look,
+            input::toggle_cursor_capture,
+            player::update_bullets,
+        ))
         .add_system(render::render_map.in_schedule(OnEnter(AppState::RenderMap)))
-        .add_system(ui::update_minimap)  
-        .add_system(ui::update_fps_text)  
         .insert_resource(MouseSensitivity(0.005))
         .insert_resource(PlayerRotation::default())
-        .add_system(input::player_look)
         .add_startup_system(camera::setup_fps_camera)
         .insert_resource(CursorState { captured: true })
-        .add_system(input::toggle_cursor_capture)
         .add_system(ui::game_over_screen.in_schedule(OnEnter(AppState::GameOver)))
         .add_system(ui::display_death_screen)
-        .add_system(player::update_bullets)
         .run();
 
     Ok(())

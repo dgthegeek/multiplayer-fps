@@ -24,7 +24,7 @@ fn main() -> io::Result<()> {
     io::stdin().read_line(&mut server_addr)?;
     let server_addr = server_addr.trim().to_string();
 
-    println!("Enter Name: ");
+    println!("Enter UserName: ");
     io::stdout().flush()?;
     let mut player_name = String::new();
     io::stdin().read_line(&mut player_name)?;

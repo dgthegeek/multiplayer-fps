@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use crate::game_state::GameState;
 use crate::player::{Player, OtherPlayer};
 use crate::camera::{PlayerCamera, PlayerRotation};
+
+
 pub fn setup_3d(mut commands: Commands) {
     // Ajout d'une lumière directionnelle
     commands.spawn(DirectionalLightBundle {
@@ -20,6 +22,7 @@ pub fn setup_3d(mut commands: Commands) {
     });
     // La caméra sera ajoutée plus tard, une fois que nous aurons la position du joueur
 }
+
 pub fn render_map(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
@@ -85,6 +88,10 @@ pub fn render_walls(
         }
     }
 }
+
+#[derive(Component)]
+pub struct WeaponModel;
+
 pub fn update_player_positions(
     mut commands: Commands,
     game_state: Res<GameState>,
@@ -93,86 +100,88 @@ pub fn update_player_positions(
         Query<(Entity, &mut Transform), With<Player>>,
         Query<(Entity, &mut Transform, &OtherPlayer)>,
         Query<(Entity, &mut Transform), With<PlayerCamera>>,
+        Query<(Entity, &mut Transform), With<WeaponModel>>,
     )>,
     asset_server: Res<AssetServer>,
 ) {
     if let Some(player_id) = &game_state.player_id {
         if let Some(&(position_x, position_y, _, is_alive)) = game_state.players.get(player_id) {
             if is_alive {
-                let mut player_query = query_set.p0();
-                let _player_entity = if let Ok((entity, mut transform)) = player_query.get_single_mut() {
-                    transform.translation = Vec3::new(position_x, 0.0, position_y);
-                    transform.rotation = Quat::from_rotation_y(player_rotation.yaw + std::f32::consts::PI);
+                let eye_height = 1.6; // Adjust this to match average eye level
+                let forward_offset = 0.01;
+                let mut camera_query = query_set.p2();
+                let new_camera_position = Vec3::new(
+                    position_x - forward_offset * player_rotation.yaw.sin(),
+                    eye_height,
+                    position_y - forward_offset * player_rotation.yaw.cos()
+                );
+                let new_camera_rotation = Quat::from_euler(EulerRot::YXZ, player_rotation.yaw, player_rotation.pitch, 0.0);
+
+                let camera_entity = if let Ok((entity, mut camera_transform)) = camera_query.get_single_mut() {
+                    camera_transform.translation = new_camera_position;
+                    camera_transform.rotation = new_camera_rotation;
                     entity
                 } else {
                     commands.spawn((
-                        SceneBundle {
-                            scene: asset_server.load("models/player/Soldier.glb#Scene0"),
-                            transform: Transform::from_xyz(position_x, 0.0, position_y)
-                                .with_rotation(Quat::from_rotation_y(player_rotation.yaw + std::f32::consts::PI)) // Rotation de 180 degrés
-                                .with_scale(Vec3::splat(0.03)),
-                            ..default()
-                        },
-                        Player,
-                    )).id()
-                };
-                let eye_height = 1.0;
-                let forward_offset = 0.01;
-                let mut camera_query = query_set.p2();
-                if let Ok((_, mut camera_transform)) = camera_query.get_single_mut() {
-                    let new_camera_position = Vec3::new(
-                        position_x - forward_offset * player_rotation.yaw.sin(),
-                        eye_height,
-                        position_y - forward_offset * player_rotation.yaw.cos()
-                    );
-                    camera_transform.translation = new_camera_position;
-                    camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, player_rotation.yaw, player_rotation.pitch, 0.0);
-                } else {
-                    commands.spawn((
                         Camera3dBundle {
-                            transform: Transform::from_xyz(
-                                position_x - forward_offset * player_rotation.yaw.sin(),
-                                eye_height,
-                                position_y - forward_offset * player_rotation.yaw.cos(),
-                            )
-                            .with_rotation(Quat::from_euler(EulerRot::YXZ, player_rotation.yaw, player_rotation.pitch, 0.0)),
+                            transform: Transform::from_translation(new_camera_position)
+                                .with_rotation(new_camera_rotation),
                             ..default()
                         },
                         PlayerCamera,
-                    ));
+                    )).id()
+                };
+
+                // Add or update AK-47 model
+                let mut weapon_query = query_set.p3();
+                if let Ok((_weapon_entity, mut weapon_transform)) = weapon_query.get_single_mut() {
+                    weapon_transform.translation = Vec3::new(0.5, -0.3, -0.7); 
+                } else {
+                    commands.spawn((
+                        SceneBundle {
+                            scene: asset_server.load("models/ak.glb#Scene0"),
+                            transform: Transform::from_translation(Vec3::new(0.5, -0.3, -0.7))
+                                .with_rotation(Quat::from_euler(EulerRot::XYZ, 0.0, -0.2, 0.0))
+                                .with_scale(Vec3::splat(2.0)), 
+                            ..default()
+                        },
+                        WeaponModel,
+                    )).set_parent(camera_entity);
+                }
+
+                // Remove player model for current player
+                let mut player_query = query_set.p0();
+                if let Ok((player_entity, _)) = player_query.get_single_mut() {
+                    commands.entity(player_entity).despawn_recursive();
                 }
             }
         }
     }
-    let mut other_players_to_remove = Vec::new();
-    {
-        let mut other_player_query = query_set.p1();
-        for (entity, _, other_player) in other_player_query.iter_mut() {
-            if let Some(&(_, _, _, is_alive)) = game_state.players.get(&other_player.name) {
-                if !is_alive {
-                    other_players_to_remove.push(entity);
-                }
-            } else {
-                other_players_to_remove.push(entity);
-            }
-        }
-    }
-    for entity in other_players_to_remove {
-        commands.entity(entity).despawn_recursive();
-    }
-    for (name, &(position_x, position_y, rotation, is_alive)) in game_state.players.iter() {
-        if Some(name) != game_state.player_id.as_ref() && is_alive {
-            let mut other_player_query = query_set.p1();
-            let existing_player = other_player_query.iter_mut().find(|(_, _, op)| &op.name == name);
-            
-            if let Some((_entity, mut transform, _)) = existing_player {
-                transform.translation = Vec3::new(position_x, 0.0, position_y);
+
+    // Update other players
+    let mut other_player_query = query_set.p1();
+    for (entity, mut transform, other_player) in other_player_query.iter_mut() {
+        if let Some(&(x, y, rotation, is_alive)) = game_state.players.get(&other_player.name) {
+            if is_alive {
+                transform.translation = Vec3::new(x, 0.0, y);
                 transform.rotation = Quat::from_rotation_y(rotation);
             } else {
+                commands.entity(entity).despawn_recursive();
+            }
+        } else {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+
+    // Add new other players
+    for (name, &(x, y, rotation, is_alive)) in game_state.players.iter() {
+        if Some(name) != game_state.player_id.as_ref() && is_alive {
+            let other_player_query = query_set.p1();
+            if !other_player_query.iter().any(|(_, _, op)| &op.name == name) {
                 commands.spawn((
                     SceneBundle {
                         scene: asset_server.load("models/player/Soldier.glb#Scene0"),
-                        transform: Transform::from_xyz(position_x, 0.0, position_y)
+                        transform: Transform::from_xyz(x, 0.0, y)
                             .with_rotation(Quat::from_rotation_y(rotation))
                             .with_scale(Vec3::splat(0.03)),
                         ..default()

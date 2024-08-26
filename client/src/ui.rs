@@ -147,11 +147,9 @@ if (elapsed % 0.5) < 0.016 {
     if let Ok(minimap_entity) = minimap_query.get_single() {
         // Remove old content
         commands.entity(minimap_entity).despawn_descendants();
-
         if let Some(map) = &game_state.map {
             let minimap_size = 150.0;
             let cell_size = minimap_size / map.cells.len() as f32;
-
             commands.entity(minimap_entity).with_children(|parent| {
                 // Draw maze walls
                 for (y, row) in map.cells.iter().enumerate() {
@@ -214,14 +212,7 @@ pub fn update_fps_text(
         if let Some(average) = fps.average() {
             for mut text in query.iter_mut() {
                 text.sections[0].value = format!("FPS: {:.2}", average);
-                
-                // Change color based on FPS
-                let color = if average >= 50.0 {
-                    Color::GREEN
-                } else {
-                    Color::RED
-                };
-                text.sections[0].style.color = color;
+                text.sections[0].style.color = Color::GREEN;
             }
         }
     }

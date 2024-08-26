@@ -20,49 +20,85 @@ pub fn setup_3d(mut commands: Commands) {
         color: Color::WHITE,
         brightness: 0.7,
     });
-    // La caméra sera ajoutée plus tard, une fois que nous aurons la position du joueur
 }
+
 
 pub fn render_map(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    wall_query: Query<Entity, With<Wall>>,
 ) {
     if let Some(map) = &game_state.map {
         if !game_state.map_rendered {
+            // Supprimer les anciens murs
+            for entity in wall_query.iter() {
+                commands.entity(entity).despawn();
+            }
+
             let wall_mesh = meshes.add(Mesh::from(shape::Box::new(1.0, 3.0, 1.0)));
             let wall_material = materials.add(StandardMaterial {
                 base_color: Color::rgb(0.8, 0.7, 0.6),
                 ..default()
             });
 
+            let mut internal_wall_count = 0;
+
+            // Créer les nouveaux murs
             for (y, row) in map.cells.iter().enumerate() {
                 for (x, &is_wall) in row.iter().enumerate() {
                     if is_wall {
-                        commands.spawn(PbrBundle {
-                            mesh: wall_mesh.clone(),
-                            material: wall_material.clone(),
-                            transform: Transform::from_xyz(x as f32, 1.5, y as f32),
-                            ..default()
-                        });
+                        let is_internal_wall = x > 0 && y > 0 && x < map.map_width - 1 && y < map.map_height - 1;
+                        if is_internal_wall {
+                            if internal_wall_count < map.internal_wall_count {
+                                commands.spawn((
+                                    PbrBundle {
+                                        mesh: wall_mesh.clone(),
+                                        material: wall_material.clone(),
+                                        transform: Transform::from_xyz(x as f32, 1.5, y as f32),
+                                        ..default()
+                                    },
+                                    Wall,
+                                    Renderable,
+                                ));
+                                internal_wall_count += 1;
+                            }
+                        } else {
+                            // Rendre les murs extérieurs
+                            commands.spawn((
+                                PbrBundle {
+                                    mesh: wall_mesh.clone(),
+                                    material: wall_material.clone(),
+                                    transform: Transform::from_xyz(x as f32, 1.5, y as f32),
+                                    ..default()
+                                },
+                                Wall,
+                                Renderable,
+                            ));
+                        }
                     }
                 }
             }
 
-            // Créer le sol
             let floor_size = map.cells.len() as f32;
-            commands.spawn(PbrBundle {
-                mesh: meshes.add(Mesh::from(shape::Plane { size: floor_size, subdivisions: 1 })),
-                material: materials.add(Color::rgb(0.3, 0.3, 0.3).into()),
-                transform: Transform::from_xyz(floor_size / 2.0 - 0.5, 0.0, floor_size / 2.0 - 0.5),
-                ..default()
-            });
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes.add(Mesh::from(shape::Plane { size: floor_size, subdivisions: 1 })),
+                    material: materials.add(Color::rgb(0.3, 0.3, 0.3).into()),
+                    transform: Transform::from_xyz(floor_size / 2.0 - 0.5, 0.0, floor_size / 2.0 - 0.5),
+                    ..default()
+                },
+                Renderable,
+            ));
 
             game_state.map_rendered = true;
         }
     }
 }
+
+#[derive(Component)]
+pub struct Wall;
 
 // Ajoutez ce composant
 #[derive(Component)]
@@ -131,23 +167,6 @@ pub fn update_player_positions(
                         PlayerCamera,
                     )).id()
                 };
-
-                // Add or update AK-47 model
-                let mut weapon_query = query_set.p3();
-                if let Ok((_weapon_entity, mut weapon_transform)) = weapon_query.get_single_mut() {
-                    weapon_transform.translation = Vec3::new(0.5, -0.3, -0.7); 
-                } else {
-                    commands.spawn((
-                        SceneBundle {
-                            scene: asset_server.load("models/ak.glb#Scene0"),
-                            transform: Transform::from_translation(Vec3::new(0.5, -0.3, -0.7))
-                                .with_rotation(Quat::from_euler(EulerRot::XYZ, 0.0, -0.2, 0.0))
-                                .with_scale(Vec3::splat(2.0)), 
-                            ..default()
-                        },
-                        WeaponModel,
-                    )).set_parent(camera_entity);
-                }
 
                 // Remove player model for current player
                 let mut player_query = query_set.p0();

@@ -2094,6 +2094,7 @@ dependencies = [
  "bevy",
  "bincode",
  "crossbeam-channel",
+ "futures-lite 1.13.0",
  "rand",
  "serde",
  "serde_json",

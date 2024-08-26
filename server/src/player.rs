@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-pub const PLAYER_SPEED: f32 = 0.1;
+pub const PLAYER_SPEED: f32 = 0.3;
 pub const SHOOT_RANGE: f32 = 10.0;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-pub const PLAYER_SPEED: f32 = 0.1;
+pub const PLAYER_SPEED: f32 = 0.3;
 pub const SHOOT_COOLDOWN: f32 = 0.5;
 
 #[derive(Component)]

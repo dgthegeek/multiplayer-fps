@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use bevy::prelude::*;
 use crate::game_state::GameState;
 use bevy::diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin};
@@ -136,6 +138,12 @@ pub fn update_minimap(
     mut commands: Commands,
     minimap_query: Query<Entity, With<MinimapContainer>>,
 ) {
+    
+let start = Instant::now();
+let elapsed = start.elapsed().as_secs_f64(); // Conversion en secondes flottantes
+
+if (elapsed % 0.5) < 0.016 {
+
     if let Ok(minimap_entity) = minimap_query.get_single() {
         // Remove old content
         commands.entity(minimap_entity).despawn_descendants();
@@ -195,6 +203,7 @@ pub fn update_minimap(
             });
         }
     }
+}
 }
 
 pub fn update_fps_text(

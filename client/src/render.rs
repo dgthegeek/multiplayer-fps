@@ -28,26 +28,60 @@ pub fn render_map(
 ) {
     if let Some(map) = &game_state.map {
         if !game_state.map_rendered {
+            let wall_mesh = meshes.add(Mesh::from(shape::Box::new(1.0, 3.0, 1.0)));
+            let wall_material = materials.add(StandardMaterial {
+                base_color: Color::rgb(0.8, 0.7, 0.6),
+                ..default()
+            });
+
             for (y, row) in map.cells.iter().enumerate() {
                 for (x, &is_wall) in row.iter().enumerate() {
                     if is_wall {
                         commands.spawn(PbrBundle {
-                            mesh: meshes.add(Mesh::from(shape::Box::new(1.0, 3.0, 1.0))),
-                            material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
+                            mesh: wall_mesh.clone(),
+                            material: wall_material.clone(),
                             transform: Transform::from_xyz(x as f32, 1.5, y as f32),
-                            ..default()
-                        });
-                    } else {
-                        commands.spawn(PbrBundle {
-                            mesh: meshes.add(Mesh::from(shape::Plane { size: 1.0, subdivisions: 0 })),
-                            material: materials.add(Color::rgb(0.3, 0.3, 0.3).into()),
-                            transform: Transform::from_xyz(x as f32, 0.0, y as f32),
                             ..default()
                         });
                     }
                 }
             }
+
+            // Créer le sol
+            let floor_size = map.cells.len() as f32;
+            commands.spawn(PbrBundle {
+                mesh: meshes.add(Mesh::from(shape::Plane { size: floor_size, subdivisions: 1 })),
+                material: materials.add(Color::rgb(0.3, 0.3, 0.3).into()),
+                transform: Transform::from_xyz(floor_size / 2.0 - 0.5, 0.0, floor_size / 2.0 - 0.5),
+                ..default()
+            });
+
             game_state.map_rendered = true;
+        }
+    }
+}
+
+// Ajoutez ce composant
+#[derive(Component)]
+pub struct Walls {
+    transforms: Vec<Transform>,
+}
+
+// Ajoutez ce système pour rendre les murs
+pub fn render_walls(
+    walls_query: Query<&Walls>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for walls in walls_query.iter() {
+        for wall_transform in &walls.transforms {
+            commands.spawn(PbrBundle {
+                mesh: meshes.add(Mesh::from(shape::Box::new(1.0, 3.0, 1.0))),
+                material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
+                transform: *wall_transform,
+                ..default()
+            });
         }
     }
 }
@@ -82,7 +116,6 @@ pub fn update_player_positions(
                         Player,
                     )).id()
                 };
-
                 let eye_height = 1.0;
                 let forward_offset = 0.01;
                 let mut camera_query = query_set.p2();
@@ -111,7 +144,6 @@ pub fn update_player_positions(
             }
         }
     }
-
     let mut other_players_to_remove = Vec::new();
     {
         let mut other_player_query = query_set.p1();
@@ -125,11 +157,9 @@ pub fn update_player_positions(
             }
         }
     }
-
     for entity in other_players_to_remove {
         commands.entity(entity).despawn_recursive();
     }
-
     for (name, &(position_x, position_y, rotation, is_alive)) in game_state.players.iter() {
         if Some(name) != game_state.player_id.as_ref() && is_alive {
             let mut other_player_query = query_set.p1();
@@ -149,6 +179,34 @@ pub fn update_player_positions(
                     },
                     OtherPlayer { name: name.clone() },
                 ));
+            }
+        }
+    }
+}
+#[derive(Component)]
+pub struct Renderable;
+
+
+pub fn update_visibility(
+    mut renderable_query: Query<(&mut Visibility, &GlobalTransform), With<Renderable>>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+) {
+    if let Ok((_camera, camera_transform)) = camera_query.get_single() {
+        let camera_position = camera_transform.translation();
+        let forward = camera_transform.forward();
+
+        for (mut visibility, transform) in renderable_query.iter_mut() {
+            let to_object = transform.translation() - camera_position;
+            let distance = to_object.length();
+            
+            // Ajustez ces valeurs selon vos besoins
+            let render_distance = 13.0;
+            let fov_cos = 0.5; // Approximativement 60 degrés de champ de vision
+            
+            if distance <= render_distance && to_object.normalize().dot(forward) > fov_cos {
+                *visibility = Visibility::Inherited;
+            } else {
+                *visibility = Visibility::Hidden;
             }
         }
     }

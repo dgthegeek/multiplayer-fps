@@ -162,7 +162,7 @@ pub fn update_player_positions(
                             transform: Transform {
                                 translation: new_camera_position + new_camera_rotation * weapon_offset,
                                 rotation: new_camera_rotation,
-                                scale: Vec3::splat(0.3), // Réduire la taille de l'arme
+                                scale: Vec3::splat(0.15), // Réduire la taille de l'arme
                             },
                             ..default()
                         },
@@ -204,7 +204,7 @@ pub fn update_player_positions(
                         scene: asset_server.load("models/player/Soldier.glb#Scene0"),
                         transform: Transform::from_xyz(x, 0.0, y)
                             .with_rotation(Quat::from_rotation_y(rotation))
-                            .with_scale(Vec3::splat(0.03)),
+                            .with_scale(Vec3::splat(0.06)),
                         ..default()
                     },
                     OtherPlayer { name: name.clone() },
@@ -214,11 +214,8 @@ pub fn update_player_positions(
     }
 }
 
-
-
 #[derive(Component)]
 pub struct Renderable;
-
 
 pub fn update_visibility(
     mut renderable_query: Query<(&mut Visibility, &GlobalTransform), With<Renderable>>,

@@ -124,7 +124,7 @@ pub fn update_player_positions(
     if let Some(player_id) = &game_state.player_id {
         if let Some(&(position_x, position_y, _, is_alive)) = game_state.players.get(player_id) {
             if is_alive {
-                let eye_height = 1.6; 
+                let eye_height = 1.6;
                 let forward_offset = 0.01;
                 let mut camera_query = query_set.p2();
                 let new_camera_position = Vec3::new(
@@ -134,20 +134,41 @@ pub fn update_player_positions(
                 );
                 let new_camera_rotation = Quat::from_euler(EulerRot::YXZ, player_rotation.yaw, player_rotation.pitch, 0.0);
 
-                let _camera_entity = if let Ok((entity, mut camera_transform)) = camera_query.get_single_mut() {
+                if let Ok((_entity, mut camera_transform)) = camera_query.get_single_mut() {
                     camera_transform.translation = new_camera_position;
                     camera_transform.rotation = new_camera_rotation;
-                    entity
                 } else {
-                    commands.spawn((
+                    let _ = commands.spawn((
                         Camera3dBundle {
                             transform: Transform::from_translation(new_camera_position)
                                 .with_rotation(new_camera_rotation),
                             ..default()
                         },
                         PlayerCamera,
-                    )).id()
-                };
+                    )).id();
+                }
+
+                // Gestion du modèle de l'arme
+                let weapon_offset = Vec3::new(0.1, -0.15, -0.3); // Pousser l'arme plus vers le centre
+                let mut weapon_query = query_set.p3();
+
+                if let Ok((_, mut weapon_transform)) = weapon_query.get_single_mut() {
+                    weapon_transform.translation = new_camera_position + new_camera_rotation * weapon_offset;
+                    weapon_transform.rotation = new_camera_rotation;
+                } else {
+                    commands.spawn((
+                        SceneBundle {
+                            scene: asset_server.load("models/player/ak.glb#Scene0"),
+                            transform: Transform {
+                                translation: new_camera_position + new_camera_rotation * weapon_offset,
+                                rotation: new_camera_rotation,
+                                scale: Vec3::splat(0.3), // Réduire la taille de l'arme
+                            },
+                            ..default()
+                        },
+                        WeaponModel,
+                    ));
+                }
 
                 // Remove player model for current player
                 let mut player_query = query_set.p0();
@@ -192,6 +213,7 @@ pub fn update_player_positions(
         }
     }
 }
+
 
 
 #[derive(Component)]

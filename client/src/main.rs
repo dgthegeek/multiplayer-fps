@@ -38,6 +38,7 @@ fn main() -> io::Result<()> {
         .insert_resource(NetworkReceiver(network_receiver))
         .insert_resource(NetworkSender(client_sender))
         .add_startup_system(render::setup_3d)
+        .insert_resource(input::MovementTimer(Timer::from_seconds(0.09999, TimerMode::Repeating)))
         .add_startup_system(ui::setup_ui.after(render::setup_3d))
         .add_system(network::handle_network_messages)
         .add_system(input::player_input)
@@ -57,7 +58,6 @@ fn main() -> io::Result<()> {
         .add_system(player::update_bullets)
         .add_system(render::update_visibility)
         .run();
-    
     Ok(())
 }
 

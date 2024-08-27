@@ -12,6 +12,9 @@ pub struct CursorState {
     pub captured: bool,
 }
 
+#[derive(Resource)]
+pub struct MovementTimer(pub Timer);
+
 pub fn player_input(
     keyboard_input: Res<Input<KeyCode>>,
     mouse_input: Res<Input<MouseButton>>,
@@ -19,17 +22,66 @@ pub fn player_input(
     network_sender: Res<NetworkSender>,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
+    mut timer: ResMut<MovementTimer>, // Ajoutez cette ligne
     player_rotation: Res<PlayerRotation>,
     camera_query: Query<&Transform, With<PlayerCamera>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let _ = windows;
-    if !game_state.is_alive {
+    // Mise à jour du timer
+    timer.0.tick(time.delta());
+
+    // Gestion du tir
+    if mouse_input.just_pressed(MouseButton::Left) {
+        let current_time = time.elapsed_seconds();
+        if current_time - game_state.last_shoot_time >= SHOOT_COOLDOWN {
+            game_state.last_shoot_time = current_time;
+
+            if let Ok(camera_transform) = camera_query.get_single() {
+                let shoot_direction = camera_transform.forward();
+                let shoot_message = ClientMessage::Shoot { direction: (shoot_direction.x, shoot_direction.z) };
+                if let Err(e) = network_sender.0.send(shoot_message) {
+                    eprintln!("Failed to send shoot message: {}", e);
+                }
+                println!("Player shot in direction: {:?}", (shoot_direction.x, shoot_direction.z));
+
+                let spawn_point = camera_transform.translation + shoot_direction * 2.0;
+                
+                // Calculer la rotation pour aligner la capsule horizontalement
+                let up = Vec3::Y;
+                let _right = shoot_direction.cross(up).normalize();
+                let bullet_rotation = Quat::from_rotation_arc(Vec3::Z, shoot_direction);
+
+                commands.spawn((
+                    PbrBundle {
+                        mesh: meshes.add(Mesh::from(shape::Capsule { 
+                            radius: 0.05, 
+                            rings: 0, 
+                            depth: 0.5,  
+                            latitudes: 8, 
+                            longitudes: 18, 
+                            uv_profile: shape::CapsuleUvProfile::Uniform,
+                        })),
+                        material: materials.add(Color::RED.into()),
+                        transform: Transform::from_translation(spawn_point)
+                            .with_rotation(bullet_rotation * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)), // Rotation pour rendre la capsule horizontale
+                        ..default()
+                    },
+                    Bullet {
+                        lifetime: Timer::from_seconds(0.2, TimerMode::Once),
+                    },
+                ));
+            }
+        }
+    }
+
+    // Ne pas traiter le mouvement si le timer n'est pas terminé
+    if !timer.0.finished() {
         return;
     }
-    
+
+    // Gestion du mouvement
     let mut direction = Vec3::ZERO;
     if keyboard_input.pressed(KeyCode::S) {
         direction += Vec3::new(player_rotation.yaw.sin(), 0.0, player_rotation.yaw.cos());
@@ -43,6 +95,7 @@ pub fn player_input(
     if keyboard_input.pressed(KeyCode::D) {
         direction += Vec3::new(player_rotation.yaw.cos(), 0.0, -player_rotation.yaw.sin());
     }
+
     if direction != Vec3::ZERO {
         direction = direction.normalize();
         let move_message = ClientMessage::Move { direction: (direction.x, direction.z) };
@@ -57,53 +110,9 @@ pub fn player_input(
             }
         }
     }
-    // Gestion du tir
-if mouse_input.just_pressed(MouseButton::Left) {
-    let current_time = time.elapsed_seconds();
-    if current_time - game_state.last_shoot_time >= SHOOT_COOLDOWN {
-        game_state.last_shoot_time = current_time;
-        
-        if let Ok(camera_transform) = camera_query.get_single() {
-            let shoot_direction = camera_transform.forward();
-            let shoot_message = ClientMessage::Shoot { direction: (shoot_direction.x, shoot_direction.z) };
-            if let Err(e) = network_sender.0.send(shoot_message) {
-                eprintln!("Failed to send shoot message: {}", e);
-            }
-            println!("Player shot in direction: {:?}", (shoot_direction.x, shoot_direction.z));
-
-            let spawn_point = camera_transform.translation + shoot_direction * 2.0;
-            
-            // Calculer la rotation pour aligner la capsule horizontalement
-            let up = Vec3::Y;
-            let _right = shoot_direction.cross(up).normalize();
-            let bullet_rotation = Quat::from_rotation_arc(Vec3::Z, shoot_direction);
-
-            commands.spawn((
-                PbrBundle {
-                    mesh: meshes.add(Mesh::from(shape::Capsule { 
-                        radius: 0.05, 
-                        rings: 0, 
-                        depth: 0.5,  
-                        latitudes: 8, 
-                        longitudes: 18, 
-                        uv_profile: shape::CapsuleUvProfile::Uniform,
-                    })),
-                    material: materials.add(Color::RED.into()),
-                    transform: Transform::from_translation(spawn_point)
-                        .with_rotation(bullet_rotation * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)), // Rotation pour rendre la capsule horizontale
-                    ..default()
-                },
-                Bullet {
-                    lifetime: Timer::from_seconds(0.2, TimerMode::Once),
-                },
-            ));
-        }
-    }
-}
 }
 
 
-//gerer la rotation avec le souris
 pub fn player_look(
     mut motion_evr: EventReader<MouseMotion>,
     mut player_rotation: ResMut<PlayerRotation>,
@@ -119,7 +128,6 @@ pub fn player_look(
     }
 }
 
-//pour basculer entre le jeu et dehors
 pub fn toggle_cursor_capture(
     keyboard_input: Res<Input<KeyCode>>,
     mut cursor_state: ResMut<CursorState>,

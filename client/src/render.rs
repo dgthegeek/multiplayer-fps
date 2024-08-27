@@ -31,6 +31,7 @@ pub fn render_map(
     wall_query: Query<Entity, With<Wall>>,
 ) {
     if let Some(map) = &game_state.map {
+        println!("{}", map.internal_wall_count);
         if !game_state.map_rendered {
             // Supprimer les anciens murs
             for entity in wall_query.iter() {
@@ -153,7 +154,7 @@ pub fn update_player_positions(
                 );
                 let new_camera_rotation = Quat::from_euler(EulerRot::YXZ, player_rotation.yaw, player_rotation.pitch, 0.0);
 
-                let camera_entity = if let Ok((entity, mut camera_transform)) = camera_query.get_single_mut() {
+                let _camera_entity = if let Ok((entity, mut camera_transform)) = camera_query.get_single_mut() {
                     camera_transform.translation = new_camera_position;
                     camera_transform.rotation = new_camera_rotation;
                     entity
@@ -211,6 +212,8 @@ pub fn update_player_positions(
         }
     }
 }
+
+
 #[derive(Component)]
 pub struct Renderable;
 
@@ -228,7 +231,7 @@ pub fn update_visibility(
             let distance = to_object.length();
             
             // Ajustez ces valeurs selon vos besoins
-            let render_distance = 13.0;
+            let render_distance = 30.0;
             let fov_cos = 0.5; // Approximativement 60 degrés de champ de vision
             
             if distance <= render_distance && to_object.normalize().dot(forward) > fov_cos {

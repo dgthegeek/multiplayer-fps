@@ -31,7 +31,6 @@ pub fn render_map(
     wall_query: Query<Entity, With<Wall>>,
 ) {
     if let Some(map) = &game_state.map {
-        println!("{}", map.internal_wall_count);
         if !game_state.map_rendered {
             // Supprimer les anciens murs
             for entity in wall_query.iter() {
@@ -44,45 +43,26 @@ pub fn render_map(
                 ..default()
             });
 
-            let mut internal_wall_count = 0;
-
             // Créer les nouveaux murs
             for (y, row) in map.cells.iter().enumerate() {
                 for (x, &is_wall) in row.iter().enumerate() {
                     if is_wall {
-                        let is_internal_wall = x > 0 && y > 0 && x < map.map_width - 1 && y < map.map_height - 1;
-                        if is_internal_wall {
-                            if internal_wall_count < map.internal_wall_count {
-                                commands.spawn((
-                                    PbrBundle {
-                                        mesh: wall_mesh.clone(),
-                                        material: wall_material.clone(),
-                                        transform: Transform::from_xyz(x as f32, 1.5, y as f32),
-                                        ..default()
-                                    },
-                                    Wall,
-                                    Renderable,
-                                ));
-                                internal_wall_count += 1;
-                            }
-                        } else {
-                            // Rendre les murs extérieurs
-                            commands.spawn((
-                                PbrBundle {
-                                    mesh: wall_mesh.clone(),
-                                    material: wall_material.clone(),
-                                    transform: Transform::from_xyz(x as f32, 1.5, y as f32),
-                                    ..default()
-                                },
-                                Wall,
-                                Renderable,
-                            ));
-                        }
+                        commands.spawn((
+                            PbrBundle {
+                                mesh: wall_mesh.clone(),
+                                material: wall_material.clone(),
+                                transform: Transform::from_xyz(x as f32, 1.5, y as f32),
+                                ..default()
+                            },
+                            Wall,
+                            Renderable,
+                        ));
                     }
                 }
             }
 
-            let floor_size = map.cells.len() as f32;
+            // Ajouter le sol
+            let floor_size = map.map_width as f32;
             commands.spawn((
                 PbrBundle {
                     mesh: meshes.add(Mesh::from(shape::Plane { size: floor_size, subdivisions: 1 })),
@@ -144,7 +124,7 @@ pub fn update_player_positions(
     if let Some(player_id) = &game_state.player_id {
         if let Some(&(position_x, position_y, _, is_alive)) = game_state.players.get(player_id) {
             if is_alive {
-                let eye_height = 1.6; // Adjust this to match average eye level
+                let eye_height = 1.6; 
                 let forward_offset = 0.01;
                 let mut camera_query = query_set.p2();
                 let new_camera_position = Vec3::new(

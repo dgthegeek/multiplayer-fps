@@ -9,14 +9,15 @@ pub struct Map {
     cells: Vec<Vec<bool>>, // true pour un mur, false pour un espace vide
     internal_wall_count: usize,
     map_width: usize,
-    map_height: usize, 
+    map_height: usize,
 }
+
 impl Map {
     pub fn new(difficulty: u8) -> Self {
         let mut rng = rand::thread_rng();
         let mut cells = vec![vec![false; MAP_WIDTH]; MAP_HEIGHT];
 
-        // Créer les murs extérieurs (clôtures)
+        // Créer les murs extérieurs
         for y in 0..MAP_HEIGHT {
             for x in 0..MAP_WIDTH {
                 if x == 0 || y == 0 || x == MAP_WIDTH - 1 || y == MAP_HEIGHT - 1 {
@@ -27,16 +28,18 @@ impl Map {
 
         // Générer des murs intérieurs
         let num_walls = match difficulty {
-            1 => 3,
-            2 => 5,
-            3 => 7,
-            _ => 5,
-        };   
+            1 => 5,
+            2 => 10,
+            3 => 15,
+            _ => 10,
+        };
 
-        let min_wall_length = 3;
-        let max_wall_length = 6;
+        let min_wall_length = 5; // Longueur minimale des murs
+        let max_wall_length = 10; // Longueur maximale des murs
         let wall_margin = 3;
-        let wall_spacing = 8;
+        let wall_spacing = 3; // Espacement pour éviter les collisions
+
+        let mut walls_placed = 0;
 
         for _ in 0..num_walls {
             let mut attempts = 0;
@@ -48,7 +51,7 @@ impl Map {
                 if is_horizontal {
                     let y = rng.gen_range(wall_margin..MAP_HEIGHT - wall_margin);
                     let start_x = rng.gen_range(wall_margin..MAP_WIDTH - wall_margin - length);
-                    
+
                     // Vérifier si l'emplacement est libre
                     if !is_area_clear(&cells, start_x, y, length, true, wall_spacing) {
                         continue 'placement;
@@ -58,10 +61,12 @@ impl Map {
                     for x in start_x..start_x+length {
                         cells[y][x] = true;
                     }
+                    walls_placed += 1;
+                    println!("Placed horizontal wall at ({}, {}) with length {}", y, start_x, length);
                 } else {
                     let x = rng.gen_range(wall_margin..MAP_WIDTH - wall_margin);
                     let start_y = rng.gen_range(wall_margin..MAP_HEIGHT - wall_margin - length);
-                    
+
                     // Vérifier si l'emplacement est libre
                     if !is_area_clear(&cells, x, start_y, length, false, wall_spacing) {
                         continue 'placement;
@@ -71,11 +76,17 @@ impl Map {
                     for y in start_y..start_y+length {
                         cells[y][x] = true;
                     }
+                    walls_placed += 1;
+                    println!("Placed vertical wall at ({}, {}) with length {}", x, start_y, length);
                 }
                 break; // Mur placé avec succès
             }
+            if walls_placed >= num_walls {
+                break; // On a placé suffisamment de murs
+            }
         }
-        Map { cells, internal_wall_count: num_walls, map_width: MAP_WIDTH, map_height: MAP_HEIGHT }
+        println!("Total walls placed: {}", walls_placed);
+        Map { cells, internal_wall_count: walls_placed, map_width: MAP_WIDTH, map_height: MAP_HEIGHT }
     }
 
     fn is_wall(&self, x: usize, y: usize) -> bool {
@@ -92,32 +103,15 @@ impl Map {
             }
         }
     }
-    
-}
-
-const PLAYER_SIZE: f32 = 0.5; // Ajustez cette valeur selon la taille de votre joueur
-pub fn is_valid_move(map: &Map, x: f32, y: f32) -> bool {
-    let check_point = |px: f32, py: f32| -> bool {
-        let cell_x = px.floor() as usize;
-        let cell_y = py.floor() as usize;
-        cell_x < MAP_WIDTH && cell_y < MAP_HEIGHT && !map.is_wall(cell_x, cell_y)
-    };
-
-    let half_size = PLAYER_SIZE / 2.0;
-
-    check_point(x - half_size, y - half_size) && // Coin supérieur gauche
-    check_point(x + half_size, y - half_size) && // Coin supérieur droit
-    check_point(x - half_size, y + half_size) && // Coin inférieur gauche
-    check_point(x + half_size, y + half_size)    // Coin inférieur droit
 }
 
 fn is_area_clear(cells: &Vec<Vec<bool>>, start_x: usize, start_y: usize, length: usize, is_horizontal: bool, spacing: usize) -> bool {
     let (width, height) = (cells[0].len(), cells.len());
     let (start_check_x, end_check_x, start_check_y, end_check_y) = if is_horizontal {
         (start_x.saturating_sub(spacing), (start_x + length + spacing).min(width),
-         start_y.saturating_sub(spacing), (start_y + spacing + 1).min(height))
+         start_y.saturating_sub(spacing), (start_y + spacing).min(height))
     } else {
-        (start_x.saturating_sub(spacing), (start_x + spacing + 1).min(width),
+        (start_x.saturating_sub(spacing), (start_x + spacing).min(width),
          start_y.saturating_sub(spacing), (start_y + length + spacing).min(height))
     };
 
@@ -130,3 +124,32 @@ fn is_area_clear(cells: &Vec<Vec<bool>>, start_x: usize, start_y: usize, length:
     }
     true
 }
+
+
+
+
+
+const PLAYER_SIZE: f32 = 0.5; // Taille du joueur
+
+pub fn is_valid_move(map: &Map, x: f32, y: f32) -> bool {
+    let half_size = PLAYER_SIZE / 2.0;
+    let (start_x, end_x) = ((x - half_size).floor() as usize, (x + half_size).ceil() as usize);
+    let (start_y, end_y) = ((y - half_size).floor() as usize, (y + half_size).ceil() as usize);
+
+    // S'assurer que les indices sont dans les limites de la carte
+    let start_x = start_x.min(MAP_WIDTH - 1);
+    let end_x = end_x.min(MAP_WIDTH - 1);
+    let start_y = start_y.min(MAP_HEIGHT - 1);
+    let end_y = end_y.min(MAP_HEIGHT - 1);
+
+    for yy in start_y..=end_y {
+        for xx in start_x..=end_x {
+            if map.is_wall(xx, yy) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+

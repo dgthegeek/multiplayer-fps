@@ -29,6 +29,7 @@ pub fn player_input(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let _ = windows;
     // Mise à jour du timer
     timer.0.tick(time.delta());
 

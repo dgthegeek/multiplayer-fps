@@ -22,67 +22,81 @@ pub fn player_input(
     network_sender: Res<NetworkSender>,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
-    mut timer: ResMut<MovementTimer>, // Ajoutez cette ligne
+    mut timer: ResMut<MovementTimer>,
     player_rotation: Res<PlayerRotation>,
-    camera_query: Query<&Transform, With<PlayerCamera>>,
+    mut query_set: ParamSet<(
+        Query<&Transform, With<PlayerCamera>>,
+        Query<&mut Transform, With<crate::render::WeaponModel>>,
+    )>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let _ = windows;
-    // Mise à jour du timer
     timer.0.tick(time.delta());
 
-    // Gestion du tir
     if mouse_input.just_pressed(MouseButton::Left) {
         let current_time = time.elapsed_seconds();
         if current_time - game_state.last_shoot_time >= SHOOT_COOLDOWN {
             game_state.last_shoot_time = current_time;
 
-            if let Ok(camera_transform) = camera_query.get_single() {
-                let shoot_direction = camera_transform.forward();
-                let shoot_message = ClientMessage::Shoot { direction: (shoot_direction.x, shoot_direction.z) };
-                if let Err(e) = network_sender.0.send(shoot_message) {
-                    eprintln!("Failed to send shoot message: {}", e);
-                }
-                println!("Player shot in direction: {:?}", (shoot_direction.x, shoot_direction.z));
+            // Obtenir la transformation de la caméra
+            let camera_transform_query = query_set.p0();
+            let camera_transform = camera_transform_query
+                .get_single()
+                .expect("Player camera not found");
+            let shoot_direction = camera_transform.forward();
 
-                let spawn_point = camera_transform.translation + shoot_direction * 2.0;
-                
-                // Calculer la rotation pour aligner la capsule horizontalement
-                let up = Vec3::Y;
-                let _right = shoot_direction.cross(up).normalize();
-                let bullet_rotation = Quat::from_rotation_arc(Vec3::Z, shoot_direction);
-
-                commands.spawn((
-                    PbrBundle {
-                        mesh: meshes.add(Mesh::from(shape::Capsule { 
-                            radius: 0.05, 
-                            rings: 0, 
-                            depth: 0.5,  
-                            latitudes: 8, 
-                            longitudes: 18, 
-                            uv_profile: shape::CapsuleUvProfile::Uniform,
-                        })),
-                        material: materials.add(Color::RED.into()),
-                        transform: Transform::from_translation(spawn_point)
-                            .with_rotation(bullet_rotation * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)), // Rotation pour rendre la capsule horizontale
-                        ..default()
-                    },
-                    Bullet {
-                        lifetime: Timer::from_seconds(0.2, TimerMode::Once),
-                    },
-                ));
+            let shoot_message = ClientMessage::Shoot { direction: (shoot_direction.x, shoot_direction.z) };
+            if let Err(e) = network_sender.0.send(shoot_message) {
+                eprintln!("Failed to send shoot message: {}", e);
             }
+            println!("Player shot in direction: {:?}", (shoot_direction.x, shoot_direction.z));
+
+            // Obtenir et modifier la transformation du modèle d'arme
+            let mut weapon_transform_query = query_set.p1();
+            let mut weapon_transform = weapon_transform_query
+                .get_single_mut()
+                .expect("Weapon model not found");
+
+            let weapon_tip = weapon_transform.translation + shoot_direction * 0.5;
+            let bullet_rotation = Quat::from_rotation_arc(Vec3::Z, shoot_direction);
+
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes.add(Mesh::from(shape::Capsule { 
+                        radius: 0.009,
+                        rings: 0,
+                        depth: 0.2,
+                        latitudes: 8,
+                        longitudes: 18,
+                        uv_profile: shape::CapsuleUvProfile::Uniform,
+                    })),
+                    material: materials.add(Color::RED.into()),
+                    transform: Transform::from_translation(weapon_tip)
+                        .with_rotation(bullet_rotation * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                    ..default()
+                },
+                Bullet {
+                    lifetime: Timer::from_seconds(0.2, TimerMode::Once),
+                },
+            ));
+
+            // Effet de secousse de l'arme
+            let shake_amount = 0.008;
+            let shake_offset = Vec3::new(
+                rand::random::<f32>() * shake_amount,
+                rand::random::<f32>() * shake_amount,
+                0.0,
+            );
+            weapon_transform.translation += shake_offset;
         }
     }
 
-    // Ne pas traiter le mouvement si le timer n'est pas terminé
     if !timer.0.finished() {
         return;
     }
 
-    // Gestion du mouvement
     let mut direction = Vec3::ZERO;
     if keyboard_input.pressed(KeyCode::S) {
         direction += Vec3::new(player_rotation.yaw.sin(), 0.0, player_rotation.yaw.cos());
@@ -112,6 +126,7 @@ pub fn player_input(
         }
     }
 }
+
 
 
 pub fn player_look(

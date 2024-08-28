@@ -132,7 +132,7 @@ impl UiAdvertisement {
     fn new(average: f64) -> Self {
         UiAdvertisement {
             average,
-            increment: 3.0, 
+            increment: 6.0, 
         }
     }
 

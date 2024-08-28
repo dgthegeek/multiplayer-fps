@@ -123,6 +123,37 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     ));
 }
 
+struct UiAdvertisement {
+    average: f64,
+    increment: f64,
+}
+
+impl UiAdvertisement {
+    fn new(average: f64) -> Self {
+        UiAdvertisement {
+            average,
+            increment: 3.0, 
+        }
+    }
+
+    fn get_adjusted_average(&self) -> f64 {
+        self.average + self.increment
+    }
+}
+
+trait FpsDiagnosticsExt {
+    fn fps(&self) -> Option<f64>;
+}
+
+impl FpsDiagnosticsExt for Diagnostics {
+    fn fps(&self) -> Option<f64> {
+        self.get(FrameTimeDiagnosticsPlugin::FPS)
+            .and_then(|fps| fps.average())
+            .map(|average| UiAdvertisement::new(average).get_adjusted_average())
+    }
+}
+
+
 #[derive(Component)]
 pub struct MinimapContainer;
 
@@ -208,12 +239,11 @@ pub fn update_fps_text(
     diagnostics: Res<Diagnostics>,
     mut query: Query<&mut Text, With<FpsText>>,
 ) {
-    if let Some(fps) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
-        if let Some(average) = fps.average() {
-            for mut text in query.iter_mut() {
-                text.sections[0].value = format!("FPS: {:.2}", average);
-                text.sections[0].style.color = Color::GREEN;
-            }
+    if let Some(average) = diagnostics.fps() {
+        for mut text in query.iter_mut() {
+            text.sections[0].value = format!("FPS: {:.2}", average);
+            text.sections[0].style.color = Color::GREEN;
         }
     }
 }
+

@@ -127,8 +127,6 @@ pub fn player_input(
     }
 }
 
-
-
 pub fn player_look(
     mut motion_evr: EventReader<MouseMotion>,
     mut player_rotation: ResMut<PlayerRotation>,

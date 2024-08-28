@@ -149,7 +149,7 @@ pub fn update_player_positions(
                 }
 
                 // Gestion du modèle de l'arme
-                let weapon_offset = Vec3::new(0.1, -0.15, -0.3); // Pousser l'arme plus vers le centre
+                let weapon_offset = Vec3::new(0.04, -0.15, -0.3); // Pousser l'arme plus vers le centre
                 let mut weapon_query = query_set.p3();
 
                 if let Ok((_, mut weapon_transform)) = weapon_query.get_single_mut() {

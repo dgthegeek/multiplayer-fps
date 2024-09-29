@@ -12,7 +12,7 @@ This is the client application for a multiplayer maze game where players navigat
 
 ## Prerequisites
 
-- Rust (2021 edition or higher)
+- Rust  (2021 edition or higher)
 - Cargo (Rust package manager)
 
 ## Installation
